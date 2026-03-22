@@ -1,5 +1,7 @@
 ---
 description: ドキュメントガイドライン。README・コード内コメント・JSDoc/docstringの書き方と原則。
+paths:
+  - "**/*.md"
 ---
 
 # ドキュメントガイドライン
