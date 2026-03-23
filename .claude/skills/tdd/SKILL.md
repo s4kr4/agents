@@ -1,7 +1,6 @@
 ---
 name: tdd
 description: TDD（テスト駆動開発）のベストプラクティスとガイドライン。Red-Green-Refactorサイクル、テストファースト開発、言語別テストフレームワークの使用方法を提供。実装時にこのスキルを参照してTDDで開発を進める。
-invocable: true
 ---
 
 # TDD（テスト駆動開発）ガイドライン
@@ -55,6 +54,7 @@ TDDは以下の3ステップを繰り返すサイクルで進めます：
 # 例：ユーザー登録機能
 
 ## テストケース一覧
+
 - [ ] 有効なメールアドレスでユーザーを作成できる
 - [ ] 無効なメールアドレスでエラーが発生する
 - [ ] 既存のメールアドレスで重複エラーが発生する
@@ -65,6 +65,7 @@ TDDは以下の3ステップを繰り返すサイクルで進めます：
 ### 2. テストの優先順位
 
 **最初に書くテスト**（シンプルなものから）：
+
 1. 正常系の最も基本的なケース
 2. 境界値のケース
 3. エラーケース
@@ -72,6 +73,8 @@ TDDは以下の3ステップを繰り返すサイクルで進めます：
 ### 3. テストの書き方
 
 #### AAA パターン（Arrange-Act-Assert）
+
+`Arrange` `Act` `Assert` のコメントも含めて記載することで、テストの構造を明確にします。
 
 ```typescript
 // TypeScript (Jest/Vitest)
@@ -122,11 +125,11 @@ class TestUserService:
 
 #### 推奨フレームワーク
 
-| フレームワーク | 用途 | 特徴 |
-|--------------|------|------|
-| **Vitest** | ユニットテスト | 高速、Vite統合、ESM対応 |
-| **Jest** | ユニットテスト | 豊富なエコシステム、スナップショット |
-| **Playwright** | E2Eテスト | クロスブラウザ、自動待機 |
+| フレームワーク | 用途           | 特徴                                 |
+| -------------- | -------------- | ------------------------------------ |
+| **Vitest**     | ユニットテスト | 高速、Vite統合、ESM対応              |
+| **Jest**       | ユニットテスト | 豊富なエコシステム、スナップショット |
+| **Playwright** | E2Eテスト      | クロスブラウザ、自動待機             |
 
 #### Vitest セットアップ
 
@@ -182,11 +185,11 @@ module.exports = {
 
 #### 推奨フレームワーク
 
-| フレームワーク | 用途 | 特徴 |
-|--------------|------|------|
-| **pytest** | ユニット/統合テスト | シンプル、プラグイン豊富 |
-| **pytest-asyncio** | 非同期テスト | async/await対応 |
-| **pytest-cov** | カバレッジ | coverage.py統合 |
+| フレームワーク     | 用途                | 特徴                     |
+| ------------------ | ------------------- | ------------------------ |
+| **pytest**         | ユニット/統合テスト | シンプル、プラグイン豊富 |
+| **pytest-asyncio** | 非同期テスト        | async/await対応          |
+| **pytest-cov**     | カバレッジ          | coverage.py統合          |
 
 #### pytest セットアップ
 
@@ -245,7 +248,7 @@ describe('UserRepository', () => {
     // Assert
     expect(mockDb.query).toHaveBeenCalledWith(
       'SELECT * FROM users WHERE id = ?',
-      ['1']
+      ['1'],
     );
     expect(result).toEqual(mockUser);
   });
@@ -293,12 +296,12 @@ class TestUserRepository:
 
 ### テストダブルの種類
 
-| 種類 | 用途 | 例 |
-|------|------|-----|
-| **Stub** | 固定値を返す | `mockDb.query.mockReturnValue([])` |
-| **Mock** | 呼び出しを検証 | `expect(mockDb.query).toHaveBeenCalled()` |
-| **Spy** | 実際の実装を呼びつつ監視 | `vi.spyOn(obj, 'method')` |
-| **Fake** | 簡易版の実装 | インメモリDB |
+| 種類     | 用途                     | 例                                        |
+| -------- | ------------------------ | ----------------------------------------- |
+| **Stub** | 固定値を返す             | `mockDb.query.mockReturnValue([])`        |
+| **Mock** | 呼び出しを検証           | `expect(mockDb.query).toHaveBeenCalled()` |
+| **Spy**  | 実際の実装を呼びつつ監視 | `vi.spyOn(obj, 'method')`                 |
+| **Fake** | 簡易版の実装             | インメモリDB                              |
 
 ### テストフィクスチャ
 
@@ -353,12 +356,12 @@ def create_test_user():
 
 ### カバレッジ目標
 
-| 対象 | 目標 | 理由 |
-|------|------|------|
+| 対象                 | 目標 | 理由                     |
+| -------------------- | ---- | ------------------------ |
 | **クリティカルパス** | 90%+ | 認証、決済、データ整合性 |
-| **ビジネスロジック** | 80%+ | 重要な処理ロジック |
-| **ユーティリティ** | 70%+ | 汎用関数 |
-| **UI/表示** | 50%+ | 複雑でない表示ロジック |
+| **ビジネスロジック** | 80%+ | 重要な処理ロジック       |
+| **ユーティリティ**   | 70%+ | 汎用関数                 |
+| **UI/表示**          | 50%+ | 複雑でない表示ロジック   |
 
 ### カバレッジの解釈
 
@@ -402,6 +405,7 @@ def create_test_user():
    - ファイル命名: `*.test.ts` / `test_*.py`
 
 2. **最初のテストを書く（RED）**
+
    ```typescript
    it('should return empty array when no users exist', async () => {
      const service = new UserService();
@@ -411,11 +415,13 @@ def create_test_user():
    ```
 
 3. **テストを実行して失敗を確認**
+
    ```bash
    npm test  # または pytest
    ```
 
 4. **最小限の実装（GREEN）**
+
    ```typescript
    class UserService {
      async findAll(): Promise<User[]> {
