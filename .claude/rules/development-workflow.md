@@ -58,7 +58,8 @@ Phase 2: Planning (Plan Mode)
                   │
 Phase 3: Implementation
 ┌──────────────────────────────────────────┐
-│  @code-implementer                       │
+│  @web-api-implementer                    │
+│  @web-ui-implementer                     │
 │  ────────────────────────────────────    │
 │  ✅ 計画に基づくコード実装              │
 │  ✅ ベストプラクティス準拠              │
@@ -89,27 +90,28 @@ Phase 4-6: Verification & Quality Check
                   │
                   ▼
         ✅ 合格 → コミット
-        ❌ 問題 → @code-implementer へフィードバック
+        ❌ 問題 → 実装エージェントへフィードバック
 ```
 
 ## Responsibility Matrix
 
-| タスク               | @code-investigator | @code-planner | @code-implementer | @code-safety-inspector |
-| -------------------- | ------------------ | ------------- | ----------------- | ---------------------- |
-| 既存コード構造の理解 | ✅                 | ❌            | ❌                | ❌                     |
-| 関連ファイルの特定   | ✅                 | ❌            | ❌                | ❌                     |
-| 影響範囲の分析       | ✅                 | ❌            | ❌                | ❌                     |
-| 既存パターンの抽出   | ✅                 | ❌            | ❌                | ❌                     |
-| 実装アプローチの設計 | ❌                 | ✅            | ❌                | ❌                     |
-| タスク分解・優先順位 | ❌                 | ✅            | ❌                | ❌                     |
-| ユーザー承認の取得   | ❌                 | ✅            | ❌                | ❌                     |
-| コード実装           | ❌                 | ❌            | ✅                | ❌                     |
-| リファクタリング     | ❌                 | ❌            | ✅                | ❌                     |
-| TypeScript型チェック | ❌                 | ❌            | ❌                | ✅                     |
-| ESLint実行           | ❌                 | ❌            | ❌                | ✅                     |
-| Prettier実行         | ❌                 | ❌            | ❌                | ✅                     |
-| プロジェクト規約検証 | ❌                 | ❌            | ❌                | ✅                     |
-| 品質レポート作成     | ❌                 | ❌            | ❌                | ✅                     |
+| タスク               | @code-investigator | @code-planner | @web-api-implementer | @web-ui-implementer | @code-safety-inspector |
+| -------------------- | ------------------ | ------------- | -------------------- | ------------------- | ---------------------- |
+| 既存コード構造の理解 | ✅                 | ❌            | ❌                   | ❌                  | ❌                     |
+| 関連ファイルの特定   | ✅                 | ❌            | ❌                   | ❌                  | ❌                     |
+| 影響範囲の分析       | ✅                 | ❌            | ❌                   | ❌                  | ❌                     |
+| 既存パターンの抽出   | ✅                 | ❌            | ❌                   | ❌                  | ❌                     |
+| 実装アプローチの設計 | ❌                 | ✅            | ❌                   | ❌                  | ❌                     |
+| タスク分解・優先順位 | ❌                 | ✅            | ❌                   | ❌                  | ❌                     |
+| ユーザー承認の取得   | ❌                 | ✅            | ❌                   | ❌                  | ❌                     |
+| API 実装             | ❌                 | ❌            | ✅                   | ❌                  | ❌                     |
+| UI 実装              | ❌                 | ❌            | ❌                   | ✅                  | ❌                     |
+| リファクタリング     | ❌                 | ❌            | ✅                   | ✅                  | ❌                     |
+| TypeScript型チェック | ❌                 | ❌            | ❌                   | ❌                  | ✅                     |
+| ESLint実行           | ❌                 | ❌            | ❌                   | ❌                  | ✅                     |
+| Prettier実行         | ❌                 | ❌            | ❌                   | ❌                  | ✅                     |
+| プロジェクト規約検証 | ❌                 | ❌            | ❌                   | ❌                  | ✅                     |
+| 品質レポート作成     | ❌                 | ❌            | ❌                   | ❌                  | ✅                     |
 
 ## Usage Examples
 
@@ -126,7 +128,8 @@ Phase 4-6: Verification & Quality Check
 # → ユーザーの承認を取得
 
 # 3. 実装（計画承認後）
-@code-implementer
+@web-api-implementer  # バックエンド API
+@web-ui-implementer   # フロントエンド UI
 
 # 4. 検証（実装完了後）
 @code-safety-inspector
@@ -140,19 +143,19 @@ Phase 4-6: Verification & Quality Check
    ↓
 @code-planner で実装計画策定・承認
    ↓
-@code-implementer で実装
+@web-api-implementer または @web-ui-implementer で実装
    ↓
 @code-safety-inspector で検証
 
 # パターン2: 計画フェーズ込み（中程度の変更）
 @code-planner で計画策定（調査も含む）
    ↓
-@code-implementer で実装
+@web-api-implementer または @web-ui-implementer で実装
    ↓
 @code-safety-inspector で検証
 
 # パターン3: 簡単な変更の場合（調査・計画スキップ）
-@code-implementer で実装（既に理解している変更）
+@web-api-implementer または @web-ui-implementer で実装
    ↓
 @code-safety-inspector で検証
 ```

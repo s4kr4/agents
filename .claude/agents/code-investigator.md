@@ -27,7 +27,8 @@ tools: Read, Grep, Glob
 **担当外**（他のエージェントへ委任）:
 
 - 実装計画の策定 → `@code-planner`
-- コード実装 → `@code-implementer`
+- バックエンド API 実装 → `@web-api-implementer`
+- フロントエンド UI 実装 → `@web-ui-implementer`
 - コード検証 → `@code-safety-inspector`
 - 設計決定（提案はするが、最終決定はしない）
 
