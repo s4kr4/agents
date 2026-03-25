@@ -10,72 +10,290 @@ React実装のベストプラクティス、コーディング規約、パター
 ## 🎯 Core Principles（コア原則）
 
 ### 1. **Component Design**（コンポーネント設計）
+
 - 関数コンポーネントを使用（クラスコンポーネントは非推奨）
 - 単一責任の原則に従う（1つのコンポーネントは1つの役割）
+- **1ファイルに1コンポーネントのみ定義する**（ファイル名＝コンポーネント名）
 - Props の型を明確に定義（TypeScript interface）
 - コンポーネントは小さく、再利用可能に保つ
 - プレゼンテーション層とロジック層を分離
 
 ### 2. **Hooks Best Practices**（Hooksのベストプラクティス）
+
 - Hooks は関数コンポーネントのトップレベルでのみ呼び出す
 - カスタムフックで共通ロジックを抽出
+- **1ファイルに1カスタムフックのみ定義する**（ファイル名＝フック名、例: `useUserData.ts`）
 - `useEffect` の依存配列を適切に管理
 - `useCallback` と `useMemo` で不要な再レンダリングを防ぐ
 - 複雑な状態管理には `useReducer` を使用
 
 ### 3. **State Management**（状態管理）
+
 - ローカル状態は `useState` で管理
 - 複雑なロジックは `useReducer` で管理
-- グローバル状態は Context API またはZustand/Reduxなどのライブラリ
+- グローバル状態は Context API またはJotai/Zustandなどのライブラリ
 - 状態のリフトアップは必要最小限に
 - Prop drilling を避けるために Context を活用
 
 ### 4. **Performance**（パフォーマンス）
-- `React.memo` で不要な再レンダリングを防ぐ
+
+- `React.memo` で不要な再レンダリングを防ぐ（ReactCompilerを使用しない場合）
 - `useCallback` でコールバック関数をメモ化
 - `useMemo` で高コストな計算をメモ化
 - レンダリング最適化は計測してから実施
 - Virtual scrolling で大量データを効率的に表示
 
-## 📚 React Patterns（詳細パターン集）
+## ✅ Code Review Checklist（コードレビューチェックリスト）
 
-詳細なコード例とパターンについては、[PATTERNS.md](PATTERNS.md)を参照してください。
+React コード実装後、以下を確認してください：
 
-### Quick Reference
+- [ ] 関数コンポーネントを使用している（クラスコンポーネント不使用）
+- [ ] 1ファイルに1コンポーネントのみ定義されている（ファイル名＝コンポーネント名）
+- [ ] カスタムフックは1ファイルに1フックのみ定義されている（ファイル名＝フック名）
+- [ ] すべての Props に型定義がある（TypeScript interface）
+- [ ] `useEffect` の依存配列が適切
+- [ ] カスタムフックで共通ロジックを抽出している
+- [ ] コンポーネント名が明確で説明的（PascalCase）
+- [ ] 不要な再レンダリングが発生していない
+- [ ] イベントハンドラが適切にバインドされている
+- [ ] エラーバウンダリが必要な箇所に実装されている
+- [ ] アクセシビリティ（ARIA属性、セマンティックHTML）が考慮されている
 
-#### 関数コンポーネントとProps型定義
+## 🎓 Learning Resources
+
+- React公式ドキュメント: https://react.dev/
+- React TypeScript Cheatsheet: https://react-typescript-cheatsheet.netlify.app/
+- React Hooks ドキュメント: https://react.dev/reference/react
+
+---
+
+**このスキルの使い方**: React実装時にこのスキルを参照して、ベストプラクティスと品質基準に従ったコンポーネントを書いてください。TypeScript基本については `/ts-implement` スキルを併用してください。
+
+---
+
+## 📚 React Patterns（コード例）
+
+---
+
+## 関数コンポーネント
+
+### 基本的な関数コンポーネント
+
 ```typescript
-// ✅ Props型を明確に定義
-interface UserCardProps {
-  user: User;
-  onEdit?: (user: User) => void;
-  isLoading?: boolean;
+// ✅ 良い例: function形式で定義
+interface TodoListProps {
+  items: Todo[];
+  onItemClick: (id: string) => void;
 }
 
-// ✅ 関数コンポーネント（名前付きエクスポート推奨）
-export function UserCard({ user, onEdit, isLoading = false }: UserCardProps) {
-  const handleEdit = () => {
-    if (onEdit) {
-      onEdit(user);
-    }
-  };
+function TodoList({ items, onItemClick }: TodoListProps) {
+  return (
+    <div>
+      {items.map((item) => (
+        <div key={item.id} onClick={() => onItemClick(item.id)}>
+          {item.title}
+        </div>
+      ))}
+    </div>
+  );
+}
 
-  if (isLoading) {
-    return <div>Loading...</div>;
-  }
+// ❌ 悪い例: アロー関数形式（非推奨）
+const TodoList = ({ items, onItemClick }: TodoListProps) => {
+  // ...
+};
 
+// ❌ 悪い例: クラスコンポーネント（禁止）
+class TodoList extends React.Component<TodoListProps> {
+  // ...
+}
+```
+
+### 名前付きエクスポート（推奨）
+
+```typescript
+// ✅ 良い例: 名前付きエクスポート
+export function UserCard({ user }: { user: User }) {
   return (
     <div>
       <h2>{user.name}</h2>
-      <button onClick={handleEdit}>Edit</button>
+      <p>{user.email}</p>
+    </div>
+  );
+}
+
+// ❌ 非推奨: デフォルトエクスポート
+export default function UserCard({ user }: { user: User }) {
+  // ...
+}
+```
+
+**理由**:
+
+- 名前付きエクスポートはリファクタリング時に安全
+- インポート時の名前が統一される
+- ツールのサポートが優れている
+
+---
+
+## Hooks の使用
+
+### useState
+
+```typescript
+import { useState } from 'react';
+
+function Counter() {
+  // ✅ useState: 状態管理
+  const [count, setCount] = useState(0);
+  const [user, setUser] = useState<User | null>(null);
+
+  // ✅ 関数形式の setState（前の値に基づく更新）
+  const increment = () => {
+    setCount((prev) => prev + 1);
+  };
+
+  return (
+    <div>
+      <p>Count: {count}</p>
+      <button onClick={increment}>Increment</button>
     </div>
   );
 }
 ```
 
-#### カスタムフック
+### useEffect
+
 ```typescript
-// ✅ カスタムフックで共通ロジックを抽出
+import { useEffect, useState } from 'react';
+
+function UserProfile({ userId }: { userId: string }) {
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  // ✅ useEffect: 副作用処理
+  useEffect(() => {
+    const fetchUser = async () => {
+      setLoading(true);
+      try {
+        const data = await getUserById(userId);
+        setUser(data);
+      } catch (error) {
+        console.error('Failed to fetch user:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchUser();
+  }, [userId]); // 依存配列を適切に指定
+
+  // ✅ クリーンアップ関数
+  useEffect(() => {
+    const subscription = subscribeToUpdates(userId);
+
+    return () => {
+      subscription.unsubscribe(); // クリーンアップ
+    };
+  }, [userId]);
+
+  if (loading) return <div>Loading...</div>;
+  if (!user) return <div>User not found</div>;
+
+  return (
+    <div>
+      <h1>{user.name}</h1>
+      <p>{user.email}</p>
+    </div>
+  );
+}
+```
+
+### useCallback と useMemo
+
+```typescript
+import { useCallback, useMemo, useState } from 'react';
+
+function ProductList({ products }: { products: Product[] }) {
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+
+  // ✅ useCallback: 関数のメモ化
+  const handleSort = useCallback(() => {
+    setSortOrder((prev) => (prev === 'asc' ? 'desc' : 'asc'));
+  }, []);
+
+  // ✅ useMemo: 計算結果のメモ化
+  const sortedProducts = useMemo(() => {
+    return products.sort((a, b) => {
+      if (sortOrder === 'asc') {
+        return a.price - b.price;
+      } else {
+        return b.price - a.price;
+      }
+    });
+  }, [products, sortOrder]);
+
+  return (
+    <div>
+      <button onClick={handleSort}>Sort</button>
+      <ul>
+        {sortedProducts.map((product) => (
+          <li key={product.id}>
+            {product.name} - ${product.price}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+```
+
+---
+
+## カスタムフック
+
+### 共通ロジックの抽出
+
+```typescript
+// ✅ カスタムフックは use で始める
+function useTodoManager() {
+  const [todos, setTodos] = useState<Todo[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const addTodo = useCallback((title: string) => {
+    const newTodo: Todo = {
+      id: Date.now().toString(),
+      title,
+      completed: false,
+    };
+    setTodos((prev) => [...prev, newTodo]);
+  }, []);
+
+  const toggleTodo = useCallback((id: string) => {
+    setTodos((prev) =>
+      prev.map((todo) =>
+        todo.id === id ? { ...todo, completed: !todo.completed } : todo,
+      ),
+    );
+  }, []);
+
+  const removeTodo = useCallback((id: string) => {
+    setTodos((prev) => prev.filter((todo) => todo.id !== id));
+  }, []);
+
+  return {
+    todos,
+    loading,
+    addTodo,
+    toggleTodo,
+    removeTodo,
+  };
+}
+```
+
+### データフェッチングのカスタムフック
+
+```typescript
 function useFetch<T>(url: string) {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
@@ -86,7 +304,9 @@ function useFetch<T>(url: string) {
       try {
         setLoading(true);
         const response = await fetch(url);
-        if (!response.ok) throw new Error('Fetch failed');
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
         const result = await response.json();
         setData(result);
       } catch (err) {
@@ -103,49 +323,88 @@ function useFetch<T>(url: string) {
 }
 ```
 
-#### useReducer でのステート管理
+---
+
+## Props の型定義
+
+### 基本的なProps型
+
 ```typescript
-// ✅ 複雑な状態はuseReducerで管理
-interface State {
-  count: number;
-  user: User | null;
-  isLoading: boolean;
+// ✅ interfaceで型定義（推奨）
+interface ButtonProps {
+  children: React.ReactNode;
+  onClick: () => void;
+  variant?: 'primary' | 'secondary';
+  disabled?: boolean;
 }
 
-type Action =
-  | { type: 'INCREMENT' }
-  | { type: 'SET_USER'; payload: User }
-  | { type: 'SET_LOADING'; payload: boolean };
-
-function reducer(state: State, action: Action): State {
-  switch (action.type) {
-    case 'INCREMENT':
-      return { ...state, count: state.count + 1 };
-    case 'SET_USER':
-      return { ...state, user: action.payload };
-    case 'SET_LOADING':
-      return { ...state, isLoading: action.payload };
-    default:
-      return state;
-  }
-}
-
-function MyComponent() {
-  const [state, dispatch] = useReducer(reducer, {
-    count: 0,
-    user: null,
-    isLoading: false,
-  });
-
+function Button({
+  children,
+  onClick,
+  variant = 'primary',
+  disabled = false,
+}: ButtonProps) {
   return (
-    <button onClick={() => dispatch({ type: 'INCREMENT' })}>
-      Count: {state.count}
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`btn btn-${variant}`}
+    >
+      {children}
     </button>
   );
 }
 ```
 
-#### Context API でのグローバル状態管理
+### ジェネリックProps
+
+```typescript
+// ✅ ジェネリックProps
+interface ListProps<T> {
+  items: T[];
+  renderItem: (item: T) => React.ReactNode;
+  keyExtractor: (item: T) => string;
+}
+
+function List<T>({ items, renderItem, keyExtractor }: ListProps<T>) {
+  return (
+    <div>
+      {items.map((item) => (
+        <div key={keyExtractor(item)}>{renderItem(item)}</div>
+      ))}
+    </div>
+  );
+}
+```
+
+### イベントハンドラの型
+
+```typescript
+function MyForm({ onSubmit }: { onSubmit: (data: FormData) => void }) {
+  // ✅ 適切なイベント型
+  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    onSubmit(formData);
+  };
+
+  const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    console.log(event.target.value);
+  };
+
+  return (
+    <form onSubmit={handleSubmit}>
+      <input onChange={handleChange} />
+      <button type="submit">Submit</button>
+    </form>
+  );
+}
+```
+
+---
+
+## Context API
+
 ```typescript
 // ✅ Context でグローバル状態を管理
 interface ThemeContextType {
@@ -158,18 +417,21 @@ const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
 
-  const toggleTheme = () => {
+  const toggleTheme = useCallback(() => {
     setTheme((prev) => (prev === 'light' ? 'dark' : 'light'));
-  };
+  }, []);
+
+  const value = useMemo(
+    () => ({ theme, toggleTheme }),
+    [theme, toggleTheme]
+  );
 
   return (
-    <ThemeContext.Provider value={{ theme, toggleTheme }}>
-      {children}
-    </ThemeContext.Provider>
+    <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
   );
 }
 
-// カスタムフックでContextを利用
+// ✅ カスタムフックでContextを利用
 export function useTheme() {
   const context = useContext(ThemeContext);
   if (!context) {
@@ -179,83 +441,182 @@ export function useTheme() {
 }
 ```
 
-#### パフォーマンス最適化
+---
+
+## useReducer による状態管理
+
+```typescript
+// ✅ 複雑な状態はuseReducerで管理
+interface State {
+  count: number;
+  user: User | null;
+  isLoading: boolean;
+}
+
+type Action =
+  | { type: 'INCREMENT' }
+  | { type: 'DECREMENT' }
+  | { type: 'SET_USER'; payload: User }
+  | { type: 'SET_LOADING'; payload: boolean }
+  | { type: 'RESET' };
+
+function reducer(state: State, action: Action): State {
+  switch (action.type) {
+    case 'INCREMENT':
+      return { ...state, count: state.count + 1 };
+    case 'DECREMENT':
+      return { ...state, count: state.count - 1 };
+    case 'SET_USER':
+      return { ...state, user: action.payload };
+    case 'SET_LOADING':
+      return { ...state, isLoading: action.payload };
+    case 'RESET':
+      return { count: 0, user: null, isLoading: false };
+    default:
+      return state;
+  }
+}
+```
+
+---
+
+## パフォーマンス最適化
+
 ```typescript
 // ✅ React.memo で不要な再レンダリングを防ぐ
 export const ExpensiveComponent = React.memo(function ExpensiveComponent({
   data,
+  count,
 }: {
   data: string;
+  count: number;
 }) {
-  return <div>{data}</div>;
+  return (
+    <div>
+      <p>Data: {data}</p>
+      <p>Count: {count}</p>
+    </div>
+  );
 });
 
-// ✅ useCallback でコールバック関数をメモ化
-function ParentComponent() {
-  const [count, setCount] = useState(0);
+// ❌ 悪い例: 過度なメモ化（依存配列にcountがあり毎回再生成される）
+const handleClick = useCallback(() => {
+  setCount(count + 1);
+}, [count]);
 
-  const handleClick = useCallback(() => {
-    console.log('Button clicked');
-  }, []); // 依存配列が空なので関数は再生成されない
-
-  return <ChildComponent onClick={handleClick} />;
-}
-
-// ✅ useMemo で高コストな計算をメモ化
-function DataDisplay({ items }: { items: Item[] }) {
-  const sortedItems = useMemo(() => {
-    return items.sort((a, b) => a.name.localeCompare(b.name));
-  }, [items]);
-
-  return (
-    <ul>
-      {sortedItems.map((item) => (
-        <li key={item.id}>{item.name}</li>
-      ))}
-    </ul>
-  );
-}
+// ✅ 良い例: 関数形式のsetStateで依存配列を不要に
+const handleClick = useCallback(() => {
+  setCount((prev) => prev + 1);
+}, []);
 ```
-
-## ✅ Quality Standards（品質基準）
-
-実装したReactコードは以下の基準を満たす必要があります：
-
-- ✅ 関数コンポーネントを使用（クラスコンポーネント不使用）
-- ✅ Props の型が明確に定義されている（TypeScript interface）
-- ✅ Hooks の使用ルールに従っている（トップレベル、条件分岐内で使わない）
-- ✅ `useEffect` の依存配列が適切
-- ✅ カスタムフックで共通ロジックを抽出
-- ✅ コンポーネント名が明確で説明的（PascalCase）
-- ✅ 単一責任の原則に従う
-- ✅ 適切なエラーハンドリング（エラーバウンダリ）
-- ✅ アクセシビリティを考慮（a11y）
-- ✅ パフォーマンス最適化が適切に実施されている
-
-## 🔍 Code Review Checklist（コードレビューチェックリスト）
-
-React コード実装後、以下を確認してください：
-
-- [ ] 関数コンポーネントを使用している
-- [ ] すべての Props に型定義がある
-- [ ] Hooks のルールに従っている（順序、トップレベル）
-- [ ] `useEffect` の依存配列が適切
-- [ ] 不要な再レンダリングが発生していない
-- [ ] `key` プロパティが適切に設定されている（リスト表示）
-- [ ] イベントハンドラが適切にバインドされている
-- [ ] State の初期値が適切
-- [ ] Context が適切に使用されている（過度な Prop drilling を回避）
-- [ ] エラーバウンダリが必要な箇所に実装されている
-- [ ] アクセシビリティ（ARIA属性、セマンティックHTML）が考慮されている
-- [ ] 未使用の state や props がない
-
-## 🎓 Learning Resources
-
-- 詳細なパターン集: [PATTERNS.md](PATTERNS.md)
-- React公式ドキュメント: https://react.dev/
-- React TypeScript Cheatsheet: https://react-typescript-cheatsheet.netlify.app/
-- React Hooks ドキュメント: https://react.dev/reference/react
 
 ---
 
-**このスキルの使い方**: React実装時にこのスキルを参照して、ベストプラクティスと品質基準に従ったコンポーネントを書いてください。TypeScript基本については `/ts-implement` スキルを併用してください。
+## エラーバウンダリ
+
+```typescript
+// ✅ エラーバウンダリはクラスコンポーネントで実装
+export class ErrorBoundary extends React.Component<
+  { children: React.ReactNode; fallback?: React.ReactNode },
+  { hasError: boolean; error: Error | null }
+> {
+  constructor(props: { children: React.ReactNode; fallback?: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error('Error caught by ErrorBoundary:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback ?? (
+        <div>
+          <h1>Something went wrong</h1>
+          <p>{this.state.error?.message}</p>
+          <button onClick={() => this.setState({ hasError: false, error: null })}>
+            Try again
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+```
+
+---
+
+## フォームハンドリング
+
+```typescript
+// ✅ 汎用的なフォームフック
+function useForm<T>(initialValues: T) {
+  const [values, setValues] = useState<T>(initialValues);
+  const [errors, setErrors] = useState<Partial<Record<keyof T, string>>>({});
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const { name, value } = e.target;
+    setValues((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const resetForm = () => {
+    setValues(initialValues);
+    setErrors({});
+  };
+
+  return { values, errors, handleChange, setErrors, resetForm };
+}
+```
+
+---
+
+## テストパターン
+
+```typescript
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+
+describe('UserCard', () => {
+  // ✅ 基本的なレンダリングテスト
+  it('should render user information', () => {
+    render(<UserCard user={mockUser} />);
+    expect(screen.getByText('John Doe')).toBeInTheDocument();
+  });
+
+  // ✅ イベントハンドラのテスト
+  it('should call onEdit when edit button is clicked', () => {
+    const handleEdit = jest.fn();
+    render(<UserCard user={mockUser} onEdit={handleEdit} />);
+    fireEvent.click(screen.getByRole('button', { name: /edit/i }));
+    expect(handleEdit).toHaveBeenCalledWith(mockUser);
+  });
+
+  // ✅ 非同期処理のテスト
+  it('should load user data', async () => {
+    render(<UserProfile userId="1" />);
+    expect(screen.getByText(/loading/i)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('John Doe')).toBeInTheDocument();
+    });
+  });
+});
+
+// ✅ カスタムフックのテスト
+import { renderHook, act } from '@testing-library/react';
+
+describe('useTodoManager', () => {
+  it('should add a new todo', () => {
+    const { result } = renderHook(() => useTodoManager());
+    act(() => {
+      result.current.addTodo('New task');
+    });
+    expect(result.current.todos).toHaveLength(1);
+    expect(result.current.todos[0].title).toBe('New task');
+  });
+});
+```
