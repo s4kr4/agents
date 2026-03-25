@@ -4,6 +4,11 @@
     "type": "command",
     "command": "~/.dotfiles/bin/claude-statusline"
   },
+  "outputStyle": "Explanatory",
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true
+  },
   "env": {
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
   },
@@ -52,6 +57,7 @@
       "Write(**/.env*)",
       "Write(**/secrets/**)"
     ],
-    "ask": []
+    "ask": [],
+    "defaultMode": "acceptEdits"
   }
 }
