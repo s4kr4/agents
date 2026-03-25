@@ -153,11 +153,6 @@ Phase 4-6: Verification & Quality Check
 @web-api-implementer または @web-ui-implementer で実装
    ↓
 @code-safety-inspector で検証
-
-# パターン3: 簡単な変更の場合（調査・計画スキップ）
-@web-api-implementer または @web-ui-implementer で実装
-   ↓
-@code-safety-inspector で検証
 ```
 
 ### フェーズ選択ガイド
@@ -166,7 +161,10 @@ Phase 4-6: Verification & Quality Check
 | -------------------------------------- | ---- | ---- | ---- | ---- |
 | 複雑（多ファイル、アーキテクチャ変更） | ✅   | ✅   | ✅   | ✅   |
 | 中程度（複数ファイル、明確なパターン） | △    | ✅   | ✅   | ✅   |
-| 単純（1-2ファイル、軽微な変更）        | ❌   | ❌   | ✅   | ✅   |
+| 単純（1-2ファイル、軽微な変更）        | ❌   | ✅   | ✅   | ✅   |
+
+**実装フェーズは変更の複雑さに関わらず常に実装エージェントに委任すること。**
+自ら直接 Edit/Write でコードを実装することは禁止。
 
 ### 問題が見つかった場合
 
