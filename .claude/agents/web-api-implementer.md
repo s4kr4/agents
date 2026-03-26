@@ -3,7 +3,12 @@ name: web-api-implementer
 description: Backend API implementation specialist. Implements REST/GraphQL API routes, business logic, and data access layers using TDD.
 model: sonnet
 color: blue
-tools: Read, Edit, Write, Bash, Grep, Glob, serena
+tools: Read, Edit, Write, Bash, Grep, Glob
+mcpServers:
+  - serena
+skills:
+  - tdd
+  - api-test
 ---
 
 バックエンド API 実装の専門家です。

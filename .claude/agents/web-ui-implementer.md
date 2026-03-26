@@ -3,7 +3,14 @@ name: web-ui-implementer
 description: Frontend UI implementation specialist. Implements React components, custom Hooks, and UI interactions using TDD.
 model: sonnet
 color: cyan
-tools: Read, Edit, Write, Bash, Grep, Glob, serena
+tools: Read, Edit, Write, Bash, Grep, Glob
+mcpServers:
+  - serena
+skills:
+  - tdd
+  - ts-implement
+  - react-implement
+  - ui-test
 ---
 
 フロントエンド UI 実装の専門家です。
