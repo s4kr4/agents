@@ -27,18 +27,14 @@ Phase 1: Investigation
 │  @code-investigator                      │
 │  ────────────────────────────────────    │
 │  ✅ 既存コード構造の理解                │
-│  ✅ 関連ファイルの特定 (Kiri MCP)      │
+│  ✅ 関連ファイルの特定                  │
 │  ✅ 影響範囲の分析                      │
 │  ✅ 既存パターンの抽出                  │
-│                                          │
-│  ❌ 計画策定 (担当外)                   │
-│  ❌ コード実装 (担当外)                 │
-│  ❌ 品質検証 (担当外)                   │
 └──────────────────────────────────────────┘
                   │
                   ▼ 調査完了
                   │
-Phase 2: Planning (Plan Mode)
+Phase 2: Planning (Plan Mode) ※単純な変更はスキップ可
 ┌──────────────────────────────────────────┐
 │  @code-planner                           │
 │  ────────────────────────────────────    │
@@ -46,12 +42,6 @@ Phase 2: Planning (Plan Mode)
 │  ✅ タスクの分解と優先順位付け          │
 │  ✅ トレードオフの整理                  │
 │  ✅ ユーザー承認の取得                  │
-│                                          │
-│  🔧 使用ツール: EnterPlanMode,          │
-│     ExitPlanMode, Read, Glob, Grep      │
-│                                          │
-│  ❌ コード実装 (担当外)                 │
-│  ❌ 品質検証 (担当外)                   │
 └──────────────────────────────────────────┘
                   │
                   ▼ 計画承認
@@ -64,17 +54,11 @@ Phase 3: Implementation
 │  ✅ 計画に基づくコード実装              │
 │  ✅ ベストプラクティス準拠              │
 │  ✅ エッジケース処理                    │
-│                                          │
-│  🔧 使用ツール: Serena MCP, Edit, Write │
-│                                          │
-│  ❌ 事前調査 (委任済)                   │
-│  ❌ 計画策定 (委任済)                   │
-│  ❌ 型チェック/Lint (委任)              │
 └──────────────────────────────────────────┘
                   │
                   ▼ 実装完了
                   │
-Phase 4-6: Verification & Quality Check
+Phase 4: Verification & Quality Check
 ┌──────────────────────────────────────────┐
 │  @code-safety-inspector                  │
 │  ────────────────────────────────────    │
@@ -83,9 +67,6 @@ Phase 4-6: Verification & Quality Check
 │  ✅ プロジェクト規約確認                │
 │  ✅ 品質レポート作成                    │
 │  ✅ コミット可否判定                    │
-│                                          │
-│  ❌ コード実装 (担当外)                 │
-│  ❌ リファクタリング (担当外)           │
 └──────────────────────────────────────────┘
                   │
                   ▼
@@ -115,30 +96,22 @@ Phase 4-6: Verification & Quality Check
 
 ## Usage Examples
 
-### 基本的な使い方（4ステップ）
+### フェーズ選択ガイド
 
-```bash
-# 1. 調査
-@code-investigator
-「ユーザー認証機能を追加してください」
+| 変更の複雑さ                           | 調査 | 計画 | 実装 | 検証 |
+| -------------------------------------- | ---- | ---- | ---- | ---- |
+| 複雑（多ファイル、アーキテクチャ変更） | ✅   | ✅   | ✅   | ✅   |
+| 中程度（複数ファイル、明確なパターン） | ✅   | ✅   | ✅   | ✅   |
+| 単純（1-2ファイル、軽微な変更）        | ✅   | ❌   | ✅   | ✅   |
 
-# 2. 計画（調査完了後）
-@code-planner
-# → Plan モードで実装計画を策定
-# → ユーザーの承認を取得
+**実装フェーズは変更の複雑さに関わらず常に実装エージェントに委任すること。**
+自ら直接 Edit/Write でコードを実装することは禁止。
 
-# 3. 実装（計画承認後）
-@web-api-implementer  # バックエンド API
-@web-ui-implementer   # フロントエンド UI
+### 通常の開発パターン
 
-# 4. 検証（実装完了後）
-@code-safety-inspector
+#### パターン1: 完全な4フェーズ実行（複雑な変更）
+
 ```
-
-### 推奨パターン
-
-```bash
-# パターン1: 完全な4フェーズ実行（複雑な変更）
 @code-investigator でコードベース調査
    ↓
 @code-planner で実装計画策定・承認
@@ -146,8 +119,11 @@ Phase 4-6: Verification & Quality Check
 @web-api-implementer または @web-ui-implementer で実装
    ↓
 @code-safety-inspector で検証
+```
 
-# パターン2: 計画フェーズ込み（中程度の変更）
+#### パターン2: 計画フェーズ込み（中程度の変更）
+
+```
 @code-planner で計画策定（調査も含む）
    ↓
 @web-api-implementer または @web-ui-implementer で実装
@@ -155,37 +131,35 @@ Phase 4-6: Verification & Quality Check
 @code-safety-inspector で検証
 ```
 
-### フェーズ選択ガイド
+#### パターン3: 計画スキップ（単純な変更）
 
-| 変更の複雑さ                           | 調査 | 計画 | 実装 | 検証 |
-| -------------------------------------- | ---- | ---- | ---- | ---- |
-| 複雑（多ファイル、アーキテクチャ変更） | ✅   | ✅   | ✅   | ✅   |
-| 中程度（複数ファイル、明確なパターン） | △    | ✅   | ✅   | ✅   |
-| 単純（1-2ファイル、軽微な変更）        | ❌   | ✅   | ✅   | ✅   |
-
-**実装フェーズは変更の複雑さに関わらず常に実装エージェントに委任すること。**
-自ら直接 Edit/Write でコードを実装することは禁止。
+```
+@code-investigator でコードベース調査
+   ↓
+@web-api-implementer または @web-ui-implementer で実装
+   ↓
+@code-safety-inspector で検証
+```
 
 ### 問題が見つかった場合
 
 ```
-@code-safety-inspector: 型エラー検出
+@code-safety-inspector: エラー検出
    ↓
 レポート作成（エラー箇所と修正案を提示）
    ↓
-@code-implementer: 修正実装
+@web-api-implementer または @web-ui-implementer: 修正実装
    ↓
 @code-safety-inspector: 再検証
 ```
 
 ## Related Resources
 
-- **TypeScript実装ベストプラクティス**:
-  - `/ts-implement`
 - **エージェント詳細定義**:
   - `~/.claude/agents/code-investigator.md`
   - `~/.claude/agents/code-planner.md`
-  - `~/.claude/agents/code-implementer.md`
+  - `~/.claude/agents/web-api-implementer.md`
+  - `~/.claude/agents/web-ui-implementer.md`
   - `~/.claude/agents/code-safety-inspector.md`
 - **グローバル開発ガイドライン**:
   - `~/.claude/CLAUDE.md`
