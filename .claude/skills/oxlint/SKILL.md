@@ -45,25 +45,41 @@ npm install --save-dev oxlint @stylistic/eslint-plugin
 #### `oxlint.config.ts`
 
 ```typescript
-import { defineConfig } from 'oxlint';
-import stylistic from '@stylistic/eslint-plugin';
+import { defineConfig } from "oxlint";
+import stylistic from "@stylistic/eslint-plugin";
 
 export default defineConfig({
-  plugins: ['react', 'react-perf', 'typescript', 'oxc'],
-  env: { browser: true, node: true, es2022: true },
-  jsPlugins: ['@stylistic/eslint-plugin'],
+  categories: {
+    correctness: "error",
+    suspicious: "error",
+  },
+  plugins: [
+    "eslint",
+    "typescript",
+    "oxc",
+  ],
+  env: {
+    browser: true,
+    node: true,
+    es2022: true,
+  },
+  jsPlugins: [
+    "@stylistic/eslint-plugin",
+  ],
   rules: {
-    'no-unused-vars': 'warn',
-    'no-console': 'off',
-    eqeqeq: 'error',
-    'no-var': 'error',
-    'prefer-const': 'error',
-    'react/jsx-no-target-blank': 'error',
-    'react/no-array-index-key': 'warn',
-    'typescript/no-explicit-any': 'warn',
+    "no-console": "off",
+    "no-unused-vars": "error",
+    "eqeqeq": "error",
+    "no-var": "error",
+    "prefer-const": "error",
+    "typescript/consistent-type-imports": "error",
+    "typescript/no-explicit-any": "error",
+    "typescript/no-non-null-assertion": "error",
+    "typescript/no-unnecessary-type-assertion": "error",
+
     ...stylistic.configs.customize({
       semi: true,
-      quotes: 'double',
+      quotes: "double",
     }).rules,
   },
 });
@@ -115,25 +131,41 @@ npm install --save-dev oxlint @stylistic/eslint-plugin
 **プロジェクトルート**
 
 ```typescript
-import { defineConfig } from 'oxlint';
-import stylistic from '@stylistic/eslint-plugin';
+import { defineConfig } from "oxlint";
+import stylistic from "@stylistic/eslint-plugin";
 
 export default defineConfig({
-  plugins: ['react', 'react-perf', 'typescript', 'oxc'],
-  env: { browser: true, node: true, es2022: true },
-  jsPlugins: ['@stylistic/eslint-plugin'],
+  categories: {
+    correctness: "error",
+    suspicious: "error",
+  },
+  plugins: [
+    "eslint",
+    "typescript",
+    "oxc",
+  ],
+  env: {
+    browser: true,
+    node: true,
+    es2022: true,
+  },
+  jsPlugins: [
+    "@stylistic/eslint-plugin",
+  ],
   rules: {
-    'no-unused-vars': 'warn',
-    'no-console': 'off',
-    eqeqeq: 'error',
-    'no-var': 'error',
-    'prefer-const': 'error',
-    'react/jsx-no-target-blank': 'error',
-    'react/no-array-index-key': 'warn',
-    'typescript/no-explicit-any': 'warn',
+    "no-console": "off",
+    "no-unused-vars": "error",
+    "eqeqeq": "error",
+    "no-var": "error",
+    "prefer-const": "error",
+    "typescript/consistent-type-imports": "error",
+    "typescript/no-explicit-any": "error",
+    "typescript/no-non-null-assertion": "error",
+    "typescript/no-unnecessary-type-assertion": "error",
+
     ...stylistic.configs.customize({
       semi: true,
-      quotes: 'double',
+      quotes: "double",
     }).rules,
   },
 });
