@@ -59,5 +59,55 @@
     ],
     "ask": [],
     "defaultMode": "acceptEdits"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.agents/.claude/scripts/hook-pre-boundary.sh",
+            "statusMessage": "プロジェクト境界チェック中..."
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "input=$(cat); echo \"$(date) tool=$(printf '%s' \"$input\" | jq -r '.tool_name // empty')\" >> /tmp/claude-hook-test.log"
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.agents/.claude/scripts/hook-post-secret-scan.sh",
+            "statusMessage": "シークレットスキャン中..."
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.agents/.claude/scripts/hook-stop-insight-logger.sh",
+            "statusMessage": "Insightログ記録中..."
+          },
+          {
+            "type": "command",
+            "command": "~/.agents/.claude/scripts/hook-stop-skill-feedback.sh",
+            "statusMessage": "スキルフィードバック自動記録中..."
+          }
+        ]
+      }
+    ]
   }
 }
