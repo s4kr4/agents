@@ -390,7 +390,7 @@ def create_test_user():
 
 ## 🔧 実装時のTDDワークフロー
 
-### `@code-implementer` での TDD 手順
+### `@web-api-implementer` / `@web-ui-implementer` での TDD 手順
 
 1. **テストファイルの作成**
    - プロダクションコードより先にテストファイルを作成

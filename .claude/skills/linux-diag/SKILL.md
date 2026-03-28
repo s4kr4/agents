@@ -158,12 +158,12 @@ journalctl -p err -n 20   # エラーログ（systemd環境）
 
 ```bash
 # カルテ一覧
-ls cartes/
+ls ~/.claude/skills/linux-diag/cartes/
 
 # キーワードでカルテを検索
-grep -l "xrdp" cartes/*.md
-grep -l "GPU" cartes/*.md
-grep -l "Docker" cartes/*.md
+grep -l "xrdp" ~/.claude/skills/linux-diag/cartes/*.md
+grep -l "GPU" ~/.claude/skills/linux-diag/cartes/*.md
+grep -l "Docker" ~/.claude/skills/linux-diag/cartes/*.md
 ```
 
 | カルテ | タグ |

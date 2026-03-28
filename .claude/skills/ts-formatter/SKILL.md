@@ -85,3 +85,28 @@ pre-push:
 
 - [oxlint公式ドキュメント](https://oxc.rs/docs/guide/usage/linter)
 - [Lefthook](https://github.com/evilmartians/lefthook)
+
+## プロジェクト固有設定の確認方法
+
+作業前に以下を確認する：
+
+1. `.eslintrc.*` / `eslint.config.*` が存在するか
+2. `.prettierrc.*` が存在するか
+3. `package.json` の `scripts` に `lint` / `format` があるか
+
+いずれかが存在する場合はプロジェクト固有設定を優先し、このスキルの設定は適用しない。
+
+## 既存設定の読み取り方
+
+```json
+// package.json の scripts 確認例
+{
+  "scripts": {
+    "lint": "eslint src",        // → npm run lint で実行
+    "lint:fix": "eslint --fix",  // → 自動修正
+    "format": "prettier --write" // → フォーマット
+  }
+}
+```
+
+プロジェクト設定がない場合のみ、`/oxlint` スキルに従って設定を導入する。
