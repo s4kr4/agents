@@ -143,17 +143,37 @@ Phase 4: Verification & Quality Check
 @code-safety-inspector で検証
 ```
 
-### 問題が見つかった場合
+### フィードバックループ（品質問題が見つかった場合）
 
-```
-@code-safety-inspector: エラー検出
+`@code-safety-inspector` と実装エージェントはフィードバックループを形成します。
+**最大3回のイテレーション**で問題を解消することを目指します。
+
+**イテレーションカウントは呼び出し元（オーケストレーター）が管理します。**
+`@code-safety-inspector` を呼び出す際は必ず現在のイテレーション番号を伝えてください（初回は1）。
+
+~~~
+@code-safety-inspector: 検査（イテレーション1）
+   ↓ 不合格
+実装エージェントへフィードバックレポート提出
    ↓
-レポート作成（エラー箇所と修正案を提示）
+@web-api-implementer / @web-ui-implementer: 修正実装
    ↓
-@web-api-implementer または @web-ui-implementer: 修正実装
+@code-safety-inspector: 検査（イテレーション2）
+   ↓ 不合格
+実装エージェントへフィードバックレポート提出
    ↓
-@code-safety-inspector: 再検証
-```
+@web-api-implementer / @web-ui-implementer: 修正実装
+   ↓
+@code-safety-inspector: 検査（イテレーション3）
+   ↓
+  合格 → コミット
+  不合格 → ユーザーにエスカレーション（手動対応を求める）
+~~~
+
+**イテレーション上限に達した場合**は、以下を含むエスカレーションレポートを作成する：
+- 残存する問題の一覧
+- これまでの修正履歴のサマリー
+- 手動対応の推奨事項
 
 ## Related Resources
 
