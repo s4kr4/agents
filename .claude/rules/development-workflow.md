@@ -52,6 +52,7 @@ Phase 3: Implementation
 ┌──────────────────────────────────────────┐
 │  @web-api-implementer                    │
 │  @web-ui-implementer                     │
+│  @general-implementer                    │
 │  ────────────────────────────────────    │
 │  ✅ 計画に基づくコード実装              │
 │  ✅ ベストプラクティス準拠              │
@@ -78,23 +79,24 @@ Phase 4: Verification & Quality Check
 
 ## Responsibility Matrix
 
-| タスク               | @code-investigator | @code-planner | @web-api-implementer | @web-ui-implementer | @code-safety-inspector |
-| -------------------- | ------------------ | ------------- | -------------------- | ------------------- | ---------------------- |
-| 既存コード構造の理解 | ✅                 | ❌            | ❌                   | ❌                  | ❌                     |
-| 関連ファイルの特定   | ✅                 | ❌            | ❌                   | ❌                  | ❌                     |
-| 影響範囲の分析       | ✅                 | ❌            | ❌                   | ❌                  | ❌                     |
-| 既存パターンの抽出   | ✅                 | ❌            | ❌                   | ❌                  | ❌                     |
-| 実装アプローチの設計 | ❌                 | ✅            | ❌                   | ❌                  | ❌                     |
-| タスク分解・優先順位 | ❌                 | ✅            | ❌                   | ❌                  | ❌                     |
-| ユーザー承認の取得   | ❌                 | ✅            | ❌                   | ❌                  | ❌                     |
-| API 実装             | ❌                 | ❌            | ✅                   | ❌                  | ❌                     |
-| UI 実装              | ❌                 | ❌            | ❌                   | ✅                  | ❌                     |
-| リファクタリング     | ❌                 | ❌            | ✅                   | ✅                  | ❌                     |
-| TypeScript型チェック | ❌                 | ❌            | ❌                   | ❌                  | ✅                     |
-| ESLint実行           | ❌                 | ❌            | ❌                   | ❌                  | ✅                     |
-| Prettier実行         | ❌                 | ❌            | ❌                   | ❌                  | ✅                     |
-| プロジェクト規約検証 | ❌                 | ❌            | ❌                   | ❌                  | ✅                     |
-| 品質レポート作成     | ❌                 | ❌            | ❌                   | ❌                  | ✅                     |
+| タスク                        | @code-investigator | @code-planner | @web-api-implementer | @web-ui-implementer | @general-implementer | @code-safety-inspector |
+| ----------------------------- | ------------------ | ------------- | -------------------- | ------------------- | -------------------- | ---------------------- |
+| 既存コード構造の理解          | ✅                 | ❌            | ❌                   | ❌                  | ❌                   | ❌                     |
+| 関連ファイルの特定            | ✅                 | ❌            | ❌                   | ❌                  | ❌                   | ❌                     |
+| 影響範囲の分析                | ✅                 | ❌            | ❌                   | ❌                  | ❌                   | ❌                     |
+| 既存パターンの抽出            | ✅                 | ❌            | ❌                   | ❌                  | ❌                   | ❌                     |
+| 実装アプローチの設計          | ❌                 | ✅            | ❌                   | ❌                  | ❌                   | ❌                     |
+| タスク分解・優先順位          | ❌                 | ✅            | ❌                   | ❌                  | ❌                   | ❌                     |
+| ユーザー承認の取得            | ❌                 | ✅            | ❌                   | ❌                  | ❌                   | ❌                     |
+| API 実装                      | ❌                 | ❌            | ✅                   | ❌                  | ❌                   | ❌                     |
+| UI 実装                       | ❌                 | ❌            | ❌                   | ✅                  | ❌                   | ❌                     |
+| CLIツール・スクリプト実装     | ❌                 | ❌            | ❌                   | ❌                  | ✅                   | ❌                     |
+| リファクタリング              | ❌                 | ❌            | ✅                   | ✅                  | ✅                   | ❌                     |
+| TypeScript型チェック          | ❌                 | ❌            | ❌                   | ❌                  | ❌                   | ✅                     |
+| ESLint実行                    | ❌                 | ❌            | ❌                   | ❌                  | ❌                   | ✅                     |
+| Prettier実行                  | ❌                 | ❌            | ❌                   | ❌                  | ❌                   | ✅                     |
+| プロジェクト規約検証          | ❌                 | ❌            | ❌                   | ❌                  | ❌                   | ✅                     |
+| 品質レポート作成              | ❌                 | ❌            | ❌                   | ❌                  | ❌                   | ✅                     |
 
 ## Usage Examples
 
@@ -105,6 +107,15 @@ Phase 4: Verification & Quality Check
 | 複雑（多ファイル、アーキテクチャ変更） | ✅   | ✅   | ✅   | ✅   |
 | 中程度（複数ファイル、明確なパターン） | ✅   | ✅   | ✅   | ✅   |
 | 単純（1-2ファイル、軽微な変更）        | ✅   | ❌   | ✅   | ✅   |
+
+> **例外: 使い捨てスクリプト**
+>
+> 以下の条件をすべて満たす場合、ワークフローに従わず直接実装してよい：
+> - バージョン管理しない（git 管理外）
+> - 他のコードやチームメンバーが依存しない
+> - 一度使ったら破棄する前提
+>
+> これ以外の「保守あり」スクリプトや「プロジェクトで使い続けるツール」は、通常のワークフローを適用すること。
 
 **実装フェーズは変更の複雑さに関わらず常に実装エージェントに委任すること。**
 自ら直接 Edit/Write でコードを実装することは禁止。
@@ -143,6 +154,16 @@ Phase 4: Verification & Quality Check
 @code-safety-inspector で検証
 ```
 
+#### パターン4: CLI・スクリプト（non-web実装）
+
+```
+@code-investigator でコードベース調査
+   ↓
+@general-implementer で実装
+   ↓
+@code-safety-inspector で検証
+```
+
 ### フィードバックループ（品質問題が見つかった場合）
 
 `@code-safety-inspector` と実装エージェントはフィードバックループを形成します。
@@ -156,13 +177,13 @@ Phase 4: Verification & Quality Check
    ↓ 不合格
 実装エージェントへフィードバックレポート提出
    ↓
-@web-api-implementer / @web-ui-implementer: 修正実装
+@web-api-implementer / @web-ui-implementer / @general-implementer: 修正実装
    ↓
 @code-safety-inspector: 検査（イテレーション2）
    ↓ 不合格
 実装エージェントへフィードバックレポート提出
    ↓
-@web-api-implementer / @web-ui-implementer: 修正実装
+@web-api-implementer / @web-ui-implementer / @general-implementer: 修正実装
    ↓
 @code-safety-inspector: 検査（イテレーション3）
    ↓
@@ -182,6 +203,7 @@ Phase 4: Verification & Quality Check
   - `~/.claude/agents/code-planner.md`
   - `~/.claude/agents/web-api-implementer.md`
   - `~/.claude/agents/web-ui-implementer.md`
+  - `~/.claude/agents/general-implementer.md`
   - `~/.claude/agents/code-safety-inspector.md`
 - **グローバル開発ガイドライン**:
   - `~/.claude/CLAUDE.md`
