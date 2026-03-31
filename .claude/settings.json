@@ -1,14 +1,4 @@
 {
-  "language": "japanese",
-  "statusLine": {
-    "type": "command",
-    "command": "~/.dotfiles/bin/claude-statusline"
-  },
-  "outputStyle": "Explanatory",
-  "sandbox": {
-    "enabled": true,
-    "autoAllowBashIfSandboxed": true
-  },
   "env": {
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
   },
@@ -109,5 +99,26 @@
         ]
       }
     ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "~/.dotfiles/bin/claude-statusline"
+  },
+  "extraKnownMarketplaces": {
+    "openai-codex": {
+      "source": {
+        "source": "github",
+        "repo": "openai/codex-plugin-cc"
+      }
+    }
+  },
+  "outputStyle": "Explanatory",
+  "language": "japanese",
+  "sandbox": {
+    "enabled": true,
+    "autoAllowBashIfSandboxed": true
+  },
+  "enabledPlugins": {
+    "codex@openai-codex": true
   }
 }

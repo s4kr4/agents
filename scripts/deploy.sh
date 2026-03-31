@@ -32,3 +32,20 @@ link_file "$AGENTSPATH/.claude/skills"  "$HOME/.claude/skills"
 link_file "$AGENTSPATH/.claude/rules"   "$HOME/.claude/rules"
 
 echo "==> Claude Code config deployed!"
+
+echo "==> Deploying Codex skills..."
+
+mkdir -p "$HOME/.codex/skills"
+
+if [[ -d "$AGENTSPATH/.codex/skills" ]]; then
+    for skill_path in "$AGENTSPATH"/.codex/skills/*; do
+        [[ -e "$skill_path" ]] || continue
+
+        skill_name="$(basename "$skill_path")"
+        link_file "$skill_path" "$HOME/.codex/skills/$skill_name"
+    done
+else
+    echo "  Skipped: $AGENTSPATH/.codex/skills does not exist"
+fi
+
+echo "==> Codex skills deployed!"
