@@ -7,6 +7,7 @@ fi
 
 repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
+sync_script="$repo_root/scripts/sync-claude-codex-skills.sh"
 
 map_counterpart() {
     local path="$1"
@@ -55,41 +56,88 @@ map_counterpart() {
     esac
 }
 
-declare -A staged_set=()
-declare -A issues=()
+collect_state() {
+    declare -gA staged_set=()
+    declare -gA issues=()
+    declare -g has_claude_changes=0
+    declare -g has_codex_changes=0
 
-while IFS= read -r path; do
-    [[ -n "$path" ]] || continue
-    staged_set["$path"]=1
-done < <(git diff --cached --name-only --diff-filter=ACMRD)
+    while IFS= read -r path; do
+        [[ -n "$path" ]] || continue
+        staged_set["$path"]=1
 
-for path in "${!staged_set[@]}"; do
-    counterpart="$(map_counterpart "$path" || true)"
-    [[ -n "$counterpart" ]] || continue
+        case "$path" in
+            .claude/skills/*|.claude/agents/*)
+                has_claude_changes=1
+                ;;
+            .codex/skills/*)
+                has_codex_changes=1
+                ;;
+        esac
+    done < <(git diff --cached --name-only --diff-filter=ACMRD)
 
-    if [[ -n "${staged_set[$counterpart]+x}" ]]; then
-        continue
-    fi
+    for path in "${!staged_set[@]}"; do
+        counterpart="$(map_counterpart "$path" || true)"
+        [[ -n "$counterpart" ]] || continue
 
-    if [[ -e "$counterpart" || -L "$counterpart" ]]; then
-        issues["$path"]="update and stage $counterpart"
-    else
-        issues["$path"]="create and stage $counterpart"
-    fi
-done
+        if [[ -n "${staged_set[$counterpart]+x}" ]]; then
+            continue
+        fi
+
+        if [[ -e "$counterpart" || -L "$counterpart" ]]; then
+            issues["$path"]="update and stage $counterpart"
+        else
+            issues["$path"]="create and stage $counterpart"
+        fi
+    done
+}
+
+stage_synced_files() {
+    git add .claude/skills .claude/agents .codex/skills
+}
+
+collect_state
+
+if [[ "${#issues[@]}" -eq 0 ]]; then
+    exit 0
+fi
+
+if [[ "$has_claude_changes" -eq 1 && "$has_codex_changes" -eq 0 ]]; then
+    echo "Auto-syncing skills from Claude to Codex..."
+    "$sync_script" --from claude
+    stage_synced_files
+    collect_state
+elif [[ "$has_codex_changes" -eq 1 && "$has_claude_changes" -eq 0 ]]; then
+    echo "Auto-syncing skills from Codex to Claude..."
+    "$sync_script" --from codex
+    stage_synced_files
+    collect_state
+fi
 
 if [[ "${#issues[@]}" -eq 0 ]]; then
     exit 0
 fi
 
 echo "Skill/agent sync check failed."
-echo "Changed Claude/Codex files must be mirrored on the other side before commit:"
+
+if [[ "$has_claude_changes" -eq 1 && "$has_codex_changes" -eq 1 ]]; then
+    echo "Both Claude and Codex skill/agent files are staged in the same commit."
+    echo "Automatic sync is skipped because the source of truth is ambiguous."
+else
+    echo "Automatic sync ran, but staged files are still inconsistent."
+fi
+
+echo "Remaining paths that need manual attention:"
 
 for path in $(printf '%s\n' "${!issues[@]}" | sort); do
     echo "  - $path"
     echo "    ${issues[$path]}"
 done
 
+echo
+echo "Manual sync commands:"
+echo "  scripts/sync-claude-codex-skills.sh --from claude"
+echo "  scripts/sync-claude-codex-skills.sh --from codex"
 echo
 echo "If this is intentional, bypass once with:"
 echo "  SKIP_SKILL_SYNC_CHECK=1 git commit ..."

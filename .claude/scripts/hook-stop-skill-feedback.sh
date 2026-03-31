@@ -41,7 +41,7 @@ today=$(date +"%Y-%m-%d")
 while IFS= read -r skill; do
   [ -z "$skill" ] && continue
 
-  feedback_dir="$HOME/.agents/.claude/skills/${skill}/feedback"
+  feedback_dir="${cwd}/.claude/skills/${skill}/feedback"
 
   mkdir -p "$feedback_dir"
 
@@ -87,7 +87,7 @@ ${user_messages_excerpt}
 MARKDOWN
 
   # usage.jsonl への記録
-  tracker_dir="$HOME/.agents/.claude/skills/_tracker"
+  tracker_dir="${cwd}/.claude/skills/_tracker"
   mkdir -p "$tracker_dir"
   printf '{"timestamp":"%s","skill":"%s","cwd":"%s","session_id":"%s"}\n' \
     "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$skill" "$cwd" "$session_id" \

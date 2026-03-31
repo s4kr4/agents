@@ -3,19 +3,22 @@
 
 input=$(cat)
 
-tracker_dir="$(dirname "$0")/../skills/_tracker"
-mkdir -p "$tracker_dir"
+debug_dir="$(dirname "$0")/../skills/_tracker"
+mkdir -p "$debug_dir"
 
 timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 session_id=$(printf '%s' "$input" | jq -r '.session_id // empty')
 cwd=$(printf '%s' "$input" | jq -r '.cwd // ""')
+
+tracker_dir="${cwd}/.claude/skills/_tracker"
+mkdir -p "$tracker_dir"
 
 # デバッグログ
 printf '%s called: keys=%s transcript_path=%s\n' \
   "$timestamp" \
   "$(printf '%s' "$input" | jq -r 'keys | join(",")' 2>/dev/null)" \
   "$(printf '%s' "$input" | jq -r '.transcript_path // "(none)"' 2>/dev/null)" \
-  >> "$tracker_dir/debug-stop.log"
+  >> "$debug_dir/debug-stop.log"
 
 transcript_path=$(printf '%s' "$input" | jq -r '.transcript_path // empty')
 if [ -z "$transcript_path" ] || [ ! -f "$transcript_path" ]; then
