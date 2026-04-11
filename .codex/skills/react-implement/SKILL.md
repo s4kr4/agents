@@ -293,6 +293,8 @@ function useTodoManager() {
 
 ### データフェッチングのカスタムフック
 
+#### 素の fetch を使う場合
+
 ```typescript
 function useFetch<T>(url: string) {
   const [data, setData] = useState<T | null>(null);
@@ -322,6 +324,28 @@ function useFetch<T>(url: string) {
   return { data, loading, error };
 }
 ```
+
+#### TanStack Query を使う場合
+
+```typescript
+// ✅ TanStack Query: api-client と組み合わせるパターン
+import { useQuery } from "@tanstack/react-query";
+import { api } from "../lib/api-client";
+
+function useWeather(lat?: number, lon?: number) {
+  return useQuery({
+    queryKey: ["weather", lat, lon],  // パラメータを含めてキャッシュを分離
+    queryFn: () => api.weather.current(lat, lon),
+    staleTime: 1000 * 60 * 10,        // 10分間はキャッシュを新鮮とみなす
+    refetchInterval: 1000 * 60 * 10,  // 10分ごとに自動再取得
+  });
+}
+```
+
+ポイント:
+- queryKey にパラメータを含めると、パラメータ変更時に自動再フェッチされる
+- staleTime でキャッシュの有効期間を制御（データの更新頻度に合わせる）
+- refetchInterval で定期的なポーリングが可能
 
 ---
 
@@ -590,7 +614,7 @@ describe('UserCard', () => {
 
   // ✅ イベントハンドラのテスト
   it('should call onEdit when edit button is clicked', () => {
-    const handleEdit = jest.fn();
+    const handleEdit = vi.fn();
     render(<UserCard user={mockUser} onEdit={handleEdit} />);
     fireEvent.click(screen.getByRole('button', { name: /edit/i }));
     expect(handleEdit).toHaveBeenCalledWith(mockUser);
