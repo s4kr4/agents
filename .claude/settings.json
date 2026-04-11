@@ -93,6 +93,11 @@
           },
           {
             "type": "command",
+            "command": "~/.agents/memory/hook-stop-memory.sh",
+            "statusMessage": "共有メモリ更新中..."
+          },
+          {
+            "type": "command",
             "command": "~/.agents/.claude/scripts/hook-stop-skill-feedback.sh",
             "statusMessage": "スキルフィードバック自動記録中..."
           }
@@ -103,6 +108,9 @@
   "statusLine": {
     "type": "command",
     "command": "~/.dotfiles/bin/claude-statusline"
+  },
+  "enabledPlugins": {
+    "codex@openai-codex": true
   },
   "extraKnownMarketplaces": {
     "openai-codex": {
@@ -115,10 +123,7 @@
   "outputStyle": "Explanatory",
   "language": "japanese",
   "sandbox": {
-    "enabled": true,
-    "autoAllowBashIfSandboxed": true
+    "enabled": false
   },
-  "enabledPlugins": {
-    "codex@openai-codex": true
-  }
+  "skipDangerousModePermissionPrompt": true
 }
