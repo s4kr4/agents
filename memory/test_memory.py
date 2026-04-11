@@ -693,6 +693,483 @@ class TestCmdCleanup(unittest.TestCase):
             db_path.unlink(missing_ok=True)
 
 
+class TestListUnextractedSubcommand(unittest.TestCase):
+    """list-unextracted subcommand should be registered and return JSON with sessions."""
+
+    def test_list_unextracted_subcommand_exists(self):
+        # Arrange
+        parser = mem.build_parser()
+
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".db") as f:
+            args = parser.parse_args(["--db", f.name, "list-unextracted"])
+
+        # Assert
+        self.assertEqual(args.command, "list-unextracted")
+        self.assertTrue(callable(args.func))
+
+    def test_list_unextracted_func_is_cmd_list_unextracted(self):
+        # Arrange
+        parser = mem.build_parser()
+
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".db") as f:
+            args = parser.parse_args(["--db", f.name, "list-unextracted"])
+
+        # Assert
+        self.assertIs(args.func, mem.cmd_list_unextracted)
+
+    def test_list_unextracted_default_limit_is_10(self):
+        # Arrange
+        parser = mem.build_parser()
+
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".db") as f:
+            args = parser.parse_args(["--db", f.name, "list-unextracted"])
+
+        # Assert
+        self.assertEqual(args.limit, 10)
+
+    def test_list_unextracted_returns_ok_and_sessions(self):
+        # Arrange
+        import argparse
+        import io
+
+        db_path = make_temp_db()
+        try:
+            conn = mem.connect_readwrite(db_path)
+            conn.execute(
+                "INSERT INTO sessions(id, client, user_id, started_at, summary) VALUES(?,?,?,?,?)",
+                ("sess_lu01", "claude-code", "u1", "2024-01-01T00:00:00+00:00", "some summary"),
+            )
+            conn.commit()
+            conn.close()
+
+            args = argparse.Namespace(db=db_path, limit=10)
+            captured = io.StringIO()
+            with patch("sys.stdout", captured):
+                mem.cmd_list_unextracted(args)
+
+            result = json.loads(captured.getvalue())
+
+            # Assert
+            self.assertTrue(result["ok"])
+            self.assertIn("sessions", result)
+            self.assertIn("count", result)
+            ids = [s["id"] for s in result["sessions"]]
+            self.assertIn("sess_lu01", ids)
+        finally:
+            db_path.unlink(missing_ok=True)
+
+    def test_list_unextracted_excludes_already_extracted(self):
+        # Arrange
+        import argparse
+        import io
+
+        db_path = make_temp_db()
+        try:
+            conn = mem.connect_readwrite(db_path)
+            conn.execute(
+                "INSERT INTO sessions(id, client, user_id, started_at, summary, extracted_at) VALUES(?,?,?,?,?,?)",
+                ("sess_done01", "claude-code", "u1", "2024-01-01T00:00:00+00:00", "done", "2024-01-02T00:00:00+00:00"),
+            )
+            conn.commit()
+            conn.close()
+
+            args = argparse.Namespace(db=db_path, limit=10)
+            captured = io.StringIO()
+            with patch("sys.stdout", captured):
+                mem.cmd_list_unextracted(args)
+
+            result = json.loads(captured.getvalue())
+
+            # Assert
+            ids = [s["id"] for s in result["sessions"]]
+            self.assertNotIn("sess_done01", ids)
+        finally:
+            db_path.unlink(missing_ok=True)
+
+
+class TestMigrateSchemaExtractedAt(unittest.TestCase):
+    """migrate_schema() should add extracted_at column to sessions table."""
+
+    def test_sessions_table_has_extracted_at_column(self):
+        # Arrange
+        db_path = make_temp_db()
+        try:
+            conn = mem.connect_readonly(db_path)
+
+            # Act
+            columns = [row[1] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()]
+            conn.close()
+
+            # Assert
+            self.assertIn("extracted_at", columns)
+        finally:
+            db_path.unlink(missing_ok=True)
+
+    def test_migrate_schema_idempotent_with_extracted_at(self):
+        # Arrange: run migration twice
+        db_path = make_temp_db()
+        try:
+            conn = mem.connect_readwrite(db_path)
+            # Running migrate_schema again should not raise
+            mem.migrate_schema(conn)
+            conn.close()
+
+            # Assert: column still exists
+            conn2 = mem.connect_readonly(db_path)
+            columns = [row[1] for row in conn2.execute("PRAGMA table_info(sessions)").fetchall()]
+            conn2.close()
+            self.assertIn("extracted_at", columns)
+        finally:
+            db_path.unlink(missing_ok=True)
+
+
+class TestFetchUnextractedSessions(unittest.TestCase):
+    """fetch_unextracted_sessions() should return sessions without extracted_at and with summary."""
+
+    def _setup_sessions(self, db_path: Path) -> None:
+        conn = mem.connect_readwrite(db_path)
+        # Session with summary, no extracted_at → should be returned
+        conn.execute(
+            "INSERT INTO sessions(id, client, user_id, started_at, summary) VALUES(?,?,?,?,?)",
+            ("sess_unext01", "claude-code", "u1", "2024-01-01T00:00:00+00:00", "some summary"),
+        )
+        # Session without summary → should NOT be returned
+        conn.execute(
+            "INSERT INTO sessions(id, client, user_id, started_at) VALUES(?,?,?,?)",
+            ("sess_nosummary", "claude-code", "u1", "2024-01-02T00:00:00+00:00"),
+        )
+        # Session with extracted_at → should NOT be returned
+        conn.execute(
+            "INSERT INTO sessions(id, client, user_id, started_at, summary, extracted_at) VALUES(?,?,?,?,?,?)",
+            ("sess_extracted", "claude-code", "u1", "2024-01-03T00:00:00+00:00", "done", "2024-01-03T01:00:00+00:00"),
+        )
+        conn.commit()
+        conn.close()
+
+    def test_returns_only_sessions_with_summary_and_no_extracted_at(self):
+        # Arrange
+        db_path = make_temp_db()
+        try:
+            self._setup_sessions(db_path)
+            conn = mem.connect_readwrite(db_path)
+
+            # Act
+            rows = mem.fetch_unextracted_sessions(conn)
+            conn.close()
+
+            # Assert
+            ids = [row["id"] for row in rows]
+            self.assertIn("sess_unext01", ids)
+            self.assertNotIn("sess_nosummary", ids)
+            self.assertNotIn("sess_extracted", ids)
+        finally:
+            db_path.unlink(missing_ok=True)
+
+    def test_respects_limit(self):
+        # Arrange
+        db_path = make_temp_db()
+        try:
+            conn = mem.connect_readwrite(db_path)
+            for i in range(5):
+                conn.execute(
+                    "INSERT INTO sessions(id, client, user_id, started_at, summary) VALUES(?,?,?,?,?)",
+                    (f"sess_lim{i:010d}", "claude-code", "u1", f"2024-0{i+1}-01T00:00:00+00:00", f"summary {i}"),
+                )
+            conn.commit()
+
+            # Act
+            rows = mem.fetch_unextracted_sessions(conn, limit=3)
+            conn.close()
+
+            # Assert
+            self.assertEqual(len(rows), 3)
+        finally:
+            db_path.unlink(missing_ok=True)
+
+
+class TestFetchActiveMemoriesSummary(unittest.TestCase):
+    """fetch_active_memories_summary() should return key/summary text for active memories."""
+
+    def test_returns_string(self):
+        # Arrange
+        db_path = make_temp_db()
+        try:
+            conn = mem.connect_readwrite(db_path)
+
+            # Act
+            result = mem.fetch_active_memories_summary(conn)
+            conn.close()
+
+            # Assert
+            self.assertIsInstance(result, str)
+        finally:
+            db_path.unlink(missing_ok=True)
+
+    def test_includes_active_memory_key_and_summary(self):
+        # Arrange
+        db_path = make_temp_db()
+        try:
+            conn = mem.connect_readwrite(db_path)
+            conn.execute(
+                """
+                INSERT INTO memories(id, memory_type, entity_type, entity_id, key, value_json, summary,
+                    confidence, salience, scope, status, valid_from, created_at, updated_at)
+                VALUES('mem_test01', 'semantic', 'user', 'default', 'preferred_editor', '{"value":"Neovim"}',
+                    '好みのエディタ: Neovim', 0.9, 0.9, 'global', 'active',
+                    '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00')
+                """
+            )
+            conn.commit()
+
+            # Act
+            result = mem.fetch_active_memories_summary(conn)
+            conn.close()
+
+            # Assert
+            self.assertIn("preferred_editor", result)
+            self.assertIn("好みのエディタ: Neovim", result)
+        finally:
+            db_path.unlink(missing_ok=True)
+
+    def test_excludes_non_active_memories(self):
+        # Arrange
+        db_path = make_temp_db()
+        try:
+            conn = mem.connect_readwrite(db_path)
+            conn.execute(
+                """
+                INSERT INTO memories(id, memory_type, entity_type, entity_id, key, value_json, summary,
+                    confidence, salience, scope, status, valid_from, created_at, updated_at)
+                VALUES('mem_superseded', 'semantic', 'user', 'default', 'old_key', '{"value":"old"}',
+                    'old summary', 0.5, 0.5, 'global', 'superseded',
+                    '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00')
+                """
+            )
+            conn.commit()
+
+            # Act
+            result = mem.fetch_active_memories_summary(conn)
+            conn.close()
+
+            # Assert
+            self.assertNotIn("old_key", result)
+        finally:
+            db_path.unlink(missing_ok=True)
+
+
+class TestWriteMemorySubcommand(unittest.TestCase):
+    """write-memory subcommand should create observation, consolidate, and return ok."""
+
+    def test_write_memory_subcommand_exists(self):
+        # Arrange
+        parser = mem.build_parser()
+
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".db") as f:
+            args = parser.parse_args([
+                "--db", f.name, "write-memory",
+                "--session-id", "sess_test01",
+                "--memory-type", "semantic",
+                "--key", "preferred_editor",
+                "--summary", "好みのエディタ: Neovim",
+            ])
+
+        # Assert
+        self.assertEqual(args.command, "write-memory")
+        self.assertTrue(callable(args.func))
+
+    def test_write_memory_func_is_cmd_write_memory(self):
+        # Arrange
+        parser = mem.build_parser()
+
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".db") as f:
+            args = parser.parse_args([
+                "--db", f.name, "write-memory",
+                "--session-id", "sess_test01",
+                "--memory-type", "semantic",
+                "--key", "preferred_editor",
+                "--summary", "好みのエディタ: Neovim",
+            ])
+
+        # Assert
+        self.assertIs(args.func, mem.cmd_write_memory)
+
+    def test_write_memory_creates_observation_and_memory(self):
+        # Arrange
+        import argparse
+        import io
+
+        db_path = make_temp_db()
+        try:
+            # セッションを先に作成
+            conn = mem.connect_readwrite(db_path)
+            conn.execute(
+                "INSERT INTO sessions(id, client, user_id, started_at) VALUES(?,?,?,?)",
+                ("sess_wm01", "claude-code", "default", "2024-01-01T00:00:00+00:00"),
+            )
+            conn.commit()
+            conn.close()
+
+            args = argparse.Namespace(
+                db=db_path,
+                session_id="sess_wm01",
+                memory_type="semantic",
+                entity_type="user",
+                entity_id="default",
+                key="preferred_editor",
+                summary="好みのエディタ: Neovim",
+                confidence=0.9,
+                scope="global",
+                project_id=None,
+            )
+            captured = io.StringIO()
+            with patch("sys.stdout", captured):
+                mem.cmd_write_memory(args)
+
+            result = json.loads(captured.getvalue())
+
+            # Assert
+            self.assertTrue(result["ok"])
+            self.assertIn("observation_id", result)
+            self.assertIn("event_id", result)
+
+            conn2 = mem.connect_readonly(db_path)
+            obs_count = conn2.execute(
+                "SELECT COUNT(*) FROM observations WHERE extractor_version = 'claude-code-v1'"
+            ).fetchone()[0]
+            mem_count = conn2.execute(
+                "SELECT COUNT(*) FROM memories WHERE key = 'preferred_editor' AND status = 'active'"
+            ).fetchone()[0]
+            conn2.close()
+
+            self.assertEqual(obs_count, 1)
+            self.assertEqual(mem_count, 1)
+        finally:
+            db_path.unlink(missing_ok=True)
+
+    def test_write_memory_default_confidence_and_scope(self):
+        # Arrange
+        parser = mem.build_parser()
+
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".db") as f:
+            args = parser.parse_args([
+                "--db", f.name, "write-memory",
+                "--session-id", "sess_test02",
+                "--memory-type", "procedural",
+                "--key", "response_language",
+                "--summary", "応答は日本語で行う",
+            ])
+
+        # Assert: defaults
+        self.assertAlmostEqual(args.confidence, 0.8)
+        self.assertEqual(args.scope, "global")
+        self.assertEqual(args.entity_type, "user")
+        self.assertEqual(args.entity_id, "default")
+
+
+class TestMarkExtractedSubcommand(unittest.TestCase):
+    """mark-extracted subcommand should mark a session as extracted."""
+
+    def test_mark_extracted_subcommand_exists(self):
+        # Arrange
+        parser = mem.build_parser()
+
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".db") as f:
+            args = parser.parse_args(["--db", f.name, "mark-extracted", "--session-id", "sess_x01"])
+
+        # Assert
+        self.assertEqual(args.command, "mark-extracted")
+        self.assertTrue(callable(args.func))
+
+    def test_mark_extracted_func_is_cmd_mark_extracted(self):
+        # Arrange
+        parser = mem.build_parser()
+
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(suffix=".db") as f:
+            args = parser.parse_args(["--db", f.name, "mark-extracted", "--session-id", "sess_x01"])
+
+        # Assert
+        self.assertIs(args.func, mem.cmd_mark_extracted)
+
+    def test_mark_extracted_updates_session(self):
+        # Arrange
+        import argparse
+        import io
+
+        db_path = make_temp_db()
+        try:
+            conn = mem.connect_readwrite(db_path)
+            conn.execute(
+                "INSERT INTO sessions(id, client, user_id, started_at, summary) VALUES(?,?,?,?,?)",
+                ("sess_me01", "claude-code", "u1", "2024-01-01T00:00:00+00:00", "some summary"),
+            )
+            conn.commit()
+            conn.close()
+
+            args = argparse.Namespace(db=db_path, session_id="sess_me01")
+            captured = io.StringIO()
+            with patch("sys.stdout", captured):
+                mem.cmd_mark_extracted(args)
+
+            result = json.loads(captured.getvalue())
+
+            # Assert
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["updated"], 1)
+
+            conn2 = mem.connect_readonly(db_path)
+            row = conn2.execute(
+                "SELECT extracted_at FROM sessions WHERE id = ?", ("sess_me01",)
+            ).fetchone()
+            conn2.close()
+            self.assertIsNotNone(row["extracted_at"])
+        finally:
+            db_path.unlink(missing_ok=True)
+
+    def test_mark_extracted_already_extracted_returns_zero(self):
+        # Arrange
+        import argparse
+        import io
+
+        db_path = make_temp_db()
+        try:
+            conn = mem.connect_readwrite(db_path)
+            conn.execute(
+                "INSERT INTO sessions(id, client, user_id, started_at, summary, extracted_at) VALUES(?,?,?,?,?,?)",
+                ("sess_already", "claude-code", "u1", "2024-01-01T00:00:00+00:00", "done", "2024-01-02T00:00:00+00:00"),
+            )
+            conn.commit()
+            conn.close()
+
+            args = argparse.Namespace(db=db_path, session_id="sess_already")
+            captured = io.StringIO()
+            with patch("sys.stdout", captured):
+                mem.cmd_mark_extracted(args)
+
+            result = json.loads(captured.getvalue())
+
+            # Assert: already extracted → updated = 0
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["updated"], 0)
+        finally:
+            db_path.unlink(missing_ok=True)
+
+
 class TestCleanupSubcommandRegistered(unittest.TestCase):
     """cleanup subcommand should be registered in build_parser()."""
 

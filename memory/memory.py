@@ -109,6 +109,10 @@ def migrate_schema(conn: sqlite3.Connection) -> None:
         WHERE status = 'active'
         """
     )
+    try:
+        conn.execute("ALTER TABLE sessions ADD COLUMN extracted_at TEXT")
+    except sqlite3.OperationalError:
+        pass  # カラム既存
 
 
 def ensure_search_index(conn: sqlite3.Connection) -> None:
@@ -696,6 +700,98 @@ def upsert_memory_from_observation(conn: sqlite3.Connection, row: sqlite3.Row) -
         (memory_id, row["id"], row["confidence"]),
     )
     return memory_id
+
+
+def fetch_unextracted_sessions(conn: sqlite3.Connection, limit: int = 10) -> list[sqlite3.Row]:
+    return conn.execute(
+        """SELECT * FROM sessions
+           WHERE extracted_at IS NULL AND summary IS NOT NULL
+           ORDER BY started_at ASC LIMIT ?""",
+        (limit,),
+    ).fetchall()
+
+
+def fetch_active_memories_summary(conn: sqlite3.Connection) -> str:
+    rows = conn.execute(
+        "SELECT key, summary FROM memories WHERE status = 'active' ORDER BY updated_at DESC"
+    ).fetchall()
+    lines = [f"{row['key']}: {row['summary']}" for row in rows]
+    return "\n".join(lines)
+
+
+def cmd_list_unextracted(args: argparse.Namespace) -> None:
+    conn = connect(args.db)
+    try:
+        sessions = fetch_unextracted_sessions(conn, args.limit)
+        results = []
+        for s in sessions:
+            results.append({
+                "id": s["id"],
+                "project_id": s["project_id"],
+                "started_at": s["started_at"],
+                "ended_at": s["ended_at"],
+                "summary": s["summary"],
+            })
+        print_json({"ok": True, "sessions": results, "count": len(results)})
+    finally:
+        conn.close()
+
+
+def cmd_write_memory(args: argparse.Namespace) -> None:
+    conn = connect(args.db)
+    try:
+        session_id = args.session_id
+        now = utc_now()
+
+        # 仮想イベントを events に挿入（FK 制約対応）
+        event_id = new_id("evt")
+        conn.execute(
+            """INSERT INTO events(id, session_id, role, kind, content, created_at, importance)
+               VALUES(?, ?, 'system', 'llm-extract-source', ?, ?, 0.9)""",
+            (event_id, session_id, json.dumps({
+                "key": args.key,
+                "summary": args.summary,
+                "memory_type": args.memory_type,
+            }, ensure_ascii=False), now),
+        )
+
+        # observation を挿入
+        obs_id = new_id("obs")
+        value_json = json.dumps({
+            "memory_type": args.memory_type,
+            "value": args.summary,
+            "source": "claude_code_extract",
+        }, ensure_ascii=False)
+        conn.execute(
+            """INSERT INTO observations(id, source_event_id, entity_type, entity_id,
+               attribute, value_json, confidence, scope, observed_at, extractor_version)
+               VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 'claude-code-v1')""",
+            (obs_id, event_id, args.entity_type, args.entity_id,
+             args.key, value_json, args.confidence, args.scope, now),
+        )
+
+        # consolidate（upsert_memory_from_observation）
+        obs_row = conn.execute("SELECT * FROM observations WHERE id = ?", (obs_id,)).fetchone()
+        upsert_memory_from_observation(conn, obs_row)
+
+        conn.commit()
+        print_json({"ok": True, "observation_id": obs_id, "event_id": event_id})
+    finally:
+        conn.close()
+
+
+def cmd_mark_extracted(args: argparse.Namespace) -> None:
+    conn = connect(args.db)
+    try:
+        now = utc_now()
+        updated = conn.execute(
+            "UPDATE sessions SET extracted_at = ? WHERE id = ? AND extracted_at IS NULL",
+            (now, args.session_id),
+        ).rowcount
+        conn.commit()
+        print_json({"ok": True, "updated": updated})
+    finally:
+        conn.close()
 
 
 def cmd_cleanup(args: argparse.Namespace) -> None:
@@ -1506,6 +1602,35 @@ def build_parser() -> argparse.ArgumentParser:
         "cleanup", help="Remove stale recent_summary memories and observations"
     )
     cleanup.set_defaults(func=cmd_cleanup)
+
+    list_unextracted = subparsers.add_parser(
+        "list-unextracted", help="List sessions not yet extracted"
+    )
+    list_unextracted.add_argument("--limit", type=int, default=10)
+    list_unextracted.set_defaults(func=cmd_list_unextracted)
+
+    write_memory = subparsers.add_parser(
+        "write-memory",
+        help="Write an extracted memory (creates observation and consolidates)",
+    )
+    write_memory.add_argument("--session-id", required=True)
+    write_memory.add_argument(
+        "--memory-type", required=True, choices=["semantic", "episodic", "procedural"]
+    )
+    write_memory.add_argument("--entity-type", default="user")
+    write_memory.add_argument("--entity-id", default="default")
+    write_memory.add_argument("--key", required=True)
+    write_memory.add_argument("--summary", required=True)
+    write_memory.add_argument("--confidence", type=float, default=0.8)
+    write_memory.add_argument("--scope", default="global", choices=["global", "project"])
+    write_memory.add_argument("--project-id")
+    write_memory.set_defaults(func=cmd_write_memory)
+
+    mark_extracted = subparsers.add_parser(
+        "mark-extracted", help="Mark a session as extracted"
+    )
+    mark_extracted.add_argument("--session-id", required=True)
+    mark_extracted.set_defaults(func=cmd_mark_extracted)
 
     return parser
 

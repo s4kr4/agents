@@ -103,9 +103,8 @@ CLI は標準入力または引数で JSON を受け取り、標準出力へ JSO
 
 会話履歴や使用ログから observation を生成する。
 
-- セッション終了時に実行
-- 一定件数ごとにバッチ実行
-- 手動コマンドでも実行可能
+- ルールベース: セッション終了時に hook から `--extract` フラグで実行（キーワードマッチ）
+- LLM ベース: Claude Code のスキル `/memory-extract` でバッチ手動実行。Claude Code 自身がセッション要約を分析し、`write-memory` コマンドで書き込む
 
 ### 5. Consolidator
 
@@ -251,17 +250,17 @@ observation から安定記憶を更新する。
 2. 発話やツール実行を `events` に追記
 3. セッション終了時に要約を追加
 
+DB に書き込めない環境では、`queue-session` でファイルキュー（JSONL）にフォールバックし、後で `flush-queue` で DB に反映する。
+
 ### Extract
 
-1. 明示的な宣言を抽出
-2. 繰り返し現れる傾向を抽出
-3. 単発ノイズを除外
+2段階の抽出を行う。
 
-抽出ルール例:
+**ルールベース（hook 自動実行）:**
+セッション終了時に `--extract` フラグで呼ばれ、キーワードマッチで明示的な宣言（言語設定、OS、エディタ等）を抽出する。
 
-- 「日本語で応答して」は procedural/semantic の高信頼 observation
-- 1 回だけ出た趣味推定のようなものは低信頼
-- 複数回の明示発言が一致したら memory へ昇格
+**LLM ベース（手動バッチ実行）:**
+`/memory-extract` スキルで Claude Code 自身がセッション要約を分析し、長期的に有効な意味記憶を判断して `write-memory` コマンドで書き込む。一時的な作業内容は抽出対象外。
 
 ### Consolidate
 
@@ -470,6 +469,58 @@ memory は最低 1 つ以上の source を持つ。
 - active project memory
 - user preference summary
 - recent episodic memory
+
+### `memory write-memory`
+
+抽出された知識を直接書き込む。observations を経由して consolidate まで一括実行。
+
+入力:
+
+- session_id
+- memory_type (semantic / episodic / procedural)
+- key
+- summary
+- confidence
+- scope (global / project)
+- project_id (optional)
+
+### `memory list-unextracted`
+
+LLM 抽出が未実行のセッション一覧を返す。
+
+入力:
+
+- limit (default: 10)
+
+### `memory mark-extracted`
+
+セッションを LLM 抽出済みとしてマークする。
+
+入力:
+
+- session_id
+
+### `memory cleanup`
+
+不要な superseded memories の重複削除と recent_summary データの削除を行う。
+
+### `memory queue-session`
+
+DB 書き込み不可時にセッション情報を JSONL ファイルキューに保存する。
+
+入力:
+
+- session_id
+- client
+- user_id
+- project_id
+- user_content
+- assistant_content
+- summary
+
+### `memory flush-queue`
+
+キューに溜まった JSONL ファイルを DB に書き込む。
 
 ## CLI 契約
 
