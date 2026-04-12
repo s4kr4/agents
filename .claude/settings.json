@@ -65,14 +65,6 @@
     ],
     "PostToolUse": [
       {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "input=$(cat); echo \"$(date) tool=$(printf '%s' \"$input\" | jq -r '.tool_name // empty')\" >> /tmp/claude-hook-test.log"
-          }
-        ]
-      },
-      {
         "matcher": "Write|Edit",
         "hooks": [
           {
