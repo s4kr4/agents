@@ -8,5 +8,6 @@
 | `@code-planner` | 実装アプローチ設計・タスク分解・ユーザー承認取得（Plan モード） |
 | `@web-api-implementer` | バックエンド API 実装（REST/GraphQL・ビジネスロジック・データアクセス層） |
 | `@web-ui-implementer` | フロントエンド UI 実装（React コンポーネント・Hooks・UI インタラクション） |
+| `@web-ui-verifier` | Playwright による UI 検証（視覚・インタラクション・レスポンシブ・a11y）。UI変更時のみ使用 |
 | `@general-implementer` | CLIツール・シェルスクリプト・汎用プログラムの実装 |
 | `@code-safety-inspector` | 型チェック・Lint・プロジェクト規約検証・コミット可否判定（実装後フェーズ） |
