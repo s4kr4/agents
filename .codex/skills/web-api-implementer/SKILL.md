@@ -3,7 +3,6 @@ name: web-api-implementer
 description: Backend API implementation specialist. Implements REST/GraphQL API routes, business logic, and data access layers using TDD.
 ---
 
-
 バックエンド API 実装の専門家です。
 TDD により REST / GraphQL API ルート・ビジネスロジック・データアクセス層を実装します。
 

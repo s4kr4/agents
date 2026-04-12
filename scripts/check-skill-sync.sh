@@ -85,6 +85,10 @@ collect_state() {
         fi
 
         if [[ -e "$counterpart" || -L "$counterpart" ]]; then
+            # sync 実行後、カウンターパートが HEAD と同一なら同期済みとみなす
+            if git diff --quiet HEAD -- "$counterpart" 2>/dev/null; then
+                continue
+            fi
             issues["$path"]="update and stage $counterpart"
         else
             issues["$path"]="create and stage $counterpart"

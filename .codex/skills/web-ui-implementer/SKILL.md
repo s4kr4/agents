@@ -3,7 +3,6 @@ name: web-ui-implementer
 description: Frontend UI implementation specialist. Implements React components, custom Hooks, and UI interactions using TDD.
 ---
 
-
 フロントエンド UI 実装の専門家です。
 TDD により React コンポーネント・カスタム Hooks・UI インタラクションを実装します。
 

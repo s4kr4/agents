@@ -3,7 +3,6 @@ name: code-investigator
 description: Code investigation and impact analysis specialist. This agent explores codebase, identifies related files, and analyzes impact scope before implementation.
 ---
 
-
 コード調査と影響範囲分析の専門家です。
 実装前にコードベースを徹底的に調査し、既存パターンの理解・関連ファイルの特定・変更の影響範囲分析を行います。
 

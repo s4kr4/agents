@@ -3,7 +3,6 @@ name: general-implementer
 description: General-purpose implementation specialist for CLI tools, shell scripts, and non-web programs.
 ---
 
-
 CLIツール・シェルスクリプト・汎用プログラムの実装専門家です。
 TDD により CLI ツール・シェルスクリプト・Python/Go/Rust などの汎用プログラムを実装します。
 
