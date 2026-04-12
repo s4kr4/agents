@@ -64,7 +64,7 @@ copy_dir() {
 
 extract_body() {
     local file="$1"
-    awk 'BEGIN{n=0} /^---[[:space:]]*$/ {n++; next} n>=2 {print}' "$file"
+    awk 'BEGIN{n=0; skip=1} /^---[[:space:]]*$/ {n++; next} n>=2 { if (skip && /^[[:space:]]*$/) next; skip=0; print }' "$file"
 }
 
 extract_description() {

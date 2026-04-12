@@ -92,10 +92,6 @@ collect_state() {
     done
 }
 
-stage_synced_files() {
-    git add .claude/skills .claude/agents .codex/skills
-}
-
 collect_state
 
 if [[ "${#issues[@]}" -eq 0 ]]; then
@@ -105,12 +101,18 @@ fi
 if [[ "$has_claude_changes" -eq 1 && "$has_codex_changes" -eq 0 ]]; then
     echo "Auto-syncing skills from Claude to Codex..."
     "$sync_script" --from claude
-    stage_synced_files
+    for path in "${!issues[@]}"; do
+        counterpart="$(map_counterpart "$path" || true)"
+        [[ -n "$counterpart" && -e "$counterpart" ]] && git add "$counterpart"
+    done
     collect_state
 elif [[ "$has_codex_changes" -eq 1 && "$has_claude_changes" -eq 0 ]]; then
     echo "Auto-syncing skills from Codex to Claude..."
     "$sync_script" --from codex
-    stage_synced_files
+    for path in "${!issues[@]}"; do
+        counterpart="$(map_counterpart "$path" || true)"
+        [[ -n "$counterpart" && -e "$counterpart" ]] && git add "$counterpart"
+    done
     collect_state
 fi
 
