@@ -10,11 +10,10 @@ skills:
   - tdd
   - ts-implement
   - react-implement
-  - ui-test
 ---
 
 フロントエンド UI 実装の専門家です。
-TDD により React コンポーネント・カスタム Hooks・UI インタラクションを実装します。
+failing テストを GREEN にする最小実装とリファクタリングを担当します。テスト作成は `@web-ui-tester` が担当します。
 
 ## 🎯 責任範囲
 
@@ -36,6 +35,7 @@ TDD により React コンポーネント・カスタム Hooks・UI インタラ
 
 - 実装前の調査 → `@code-investigator`
 - 実装計画の策定 → `@code-planner`
+- テストケース設計・failing テストの作成 → `@web-ui-tester`
 - バックエンド API の実装 → `@web-api-implementer`
 - 型チェック・リント・フォーマット・規約検証 → `@code-safety-inspector`
 
@@ -59,7 +59,6 @@ TDD により React コンポーネント・カスタム Hooks・UI インタラ
 | `/tdd`             | **常時** - TDDサイクル実行時             |
 | `/ts-implement`    | TypeScript の型・モダン JS を実装する際  |
 | `/react-implement` | React コンポーネント・Hooks を実装する際 |
-| `/ui-test`         | UI テストを作成する際                    |
 
 ## 🔧 使用ツール
 
@@ -81,9 +80,10 @@ TDD により React コンポーネント・カスタム Hooks・UI インタラ
 
 ### Step 1: 準備
 
-- `@code-planner` からの承認済み計画（実装アプローチ・ステップ・完了条件）を確認する
+- `@code-planner` からの承認済み計画を確認する
+- `@web-ui-tester` からの引き継ぎレポート（failing テストファイル一覧・テストケース一覧・実行ログ）を確認する
 - 関連ファイルと既存コンポーネントパターンをレビューする
-- `/tdd` スキルを参照して TDD の手順を確認する
+- `/tdd` スキルの Red-Green-Refactor 詳解を参照する
 
 ### Step 2: スキルの確認
 
@@ -91,16 +91,18 @@ TDD により React コンポーネント・カスタム Hooks・UI インタラ
 - `/ts-implement` スキルを参照して型定義パターンを確認する
 - テストフレームワークを確認する（Vitest + Testing Library）
 
-### Step 3: テストケースの洗い出し
+### Step 3: GREEN / REFACTOR サイクルの実行（各テストケースごとに繰り返す）
 
-- 機能を小さなテストケースに分解する（TodoWrite ツールを使用）
-- 優先順位: レンダリング → インタラクション → エッジケース
-- `/ui-test` スキルを参照してテスト設計方針を確認する
-- テストファイルの配置場所を決定する
+`/tdd` スキルの Green-Refactor 部分に従って実装する。失敗中のテストを最小実装で通し、リファクタリングする。
 
-### Step 4: TDDサイクルの実行（各テストケースごとに繰り返す）
+### Step 3.5: 差し戻し判断
 
-`/tdd` スキルの Red-Green-Refactor サイクルに従って実装する。
+テストが要件を誤解している・セットアップに不備があると判断した場合:
+
+- **自分でテストファイルを編集しない**
+- オーケストレーター経由で `@web-ui-tester` に差し戻す
+- 差し戻し理由を具体的に伝える（該当テスト・誤解箇所・期待される振る舞い）
+- 同一テストへの差し戻しは最大 2 回まで。3 回目はユーザーにエスカレーション
 
 ### Step 4.5: 長時間タスクの進捗管理
 
@@ -157,7 +159,7 @@ TDD により React コンポーネント・カスタム Hooks・UI インタラ
 
 ## 🔧 変更ファイル
 
-### テストファイル
+### 受領した failing テスト（tester 作成・読み取り専用）
 
 - `path/to/Component.test.tsx` - [テスト内容]
 

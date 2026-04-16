@@ -1,11 +1,50 @@
 ---
 name: tdd
-description: TDD（テスト駆動開発）のベストプラクティスとガイドライン。Red-Green-Refactorサイクル、テストファースト開発、言語別テストフレームワークの使用方法を提供。実装時にこのスキルを参照してTDDで開発を進める。
+description: TDD（テスト駆動開発）の手順とベストプラクティス。Red-Green-Refactorサイクル、テストファースト開発、オーケストレーションモードを提供。実装時にこのスキルを参照してTDDで開発を進める。
 ---
 
 # TDD（テスト駆動開発）ガイドライン
 
-テスト駆動開発（TDD）の原則、手順、ベストプラクティスを定義します。
+テスト駆動開発（TDD）の原則、手順、ベストプラクティスを定義します。具体的なコード例やフレームワーク設定は `/api-test` `/ui-test` `/ts-implement` `/py-implement` 等の言語/用途別スキルを参照してください。
+
+## 🎭 オーケストレーション手順
+
+このスキルが起動されたら、以下の手順を**毎回必ず実行**する。
+
+### 手順
+
+1. 承認済み計画からスコープを確認（API 実装か UI 実装か）
+2. 対応する tester に委譲:
+   - API 変更 → `@web-api-tester`
+   - UI 変更 → `@web-ui-tester`
+   - 入力: 完了条件（振る舞い記述）、対象ファイル、既存パターン
+3. tester からのレポートを受領:
+   - テストファイル一覧
+   - テストケース一覧
+   - 全ケース failing の実行ログ
+4. レポートを添えて implementer に委譲:
+   - API → `@web-api-implementer`
+   - UI → `@web-ui-implementer`
+5. implementer から「GREEN 達成」レポートを受領
+6. 後続フェーズ（UI 検証 or safety inspector）へ
+
+### 呼び分け表
+
+| スコープ | tester | implementer |
+|---------|--------|-------------|
+| バックエンド API | `@web-api-tester` | `@web-api-implementer` |
+| フロントエンド UI | `@web-ui-tester` | `@web-ui-implementer` |
+| API + UI 両方 | API 側を先に完結してから UI 側へ | 同左 |
+| CLI / スクリプト | （使用しない） | `@general-implementer` に直接委譲 |
+
+### 差し戻しルール
+
+implementer が「テスト自体が不正（要件誤解・セットアップ不備）」と判断した場合:
+
+- implementer は**自分でテストを修正しない**
+- オーケストレーター経由で tester に差し戻し、理由を伝える
+- 差し戻しは**同一テストにつき最大 2 回**まで
+- 3 回目はユーザーにエスカレーション
 
 ## 🎯 TDDの基本原則
 
@@ -17,7 +56,7 @@ TDDは以下の3ステップを繰り返すサイクルで進めます：
 
 - テストファイルを作成/編集する
 - 期待する振る舞いをテストとして記述する
-- テストを実行して失敗を確認する
+- テストを実行して失敗を確認する（意図した assertion での失敗であること）
 
 **🟢 GREEN: テストを通す最小限のコードを書く**
 
@@ -40,309 +79,44 @@ TDDは以下の3ステップを繰り返すサイクルで進めます：
 
 ### 1. 要件の分解
 
-機能を小さなテストケースに分解します：
-
-```markdown
-# 例：ユーザー登録機能
-
-## テストケース一覧
-
-- [ ] 有効なメールアドレスでユーザーを作成できる
-- [ ] 無効なメールアドレスでエラーが発生する
-- [ ] 既存のメールアドレスで重複エラーが発生する
-- [ ] パスワードが8文字未満でエラーが発生する
-- [ ] パスワードがハッシュ化されて保存される
-```
+機能を小さなテストケースに分解します。チェックリスト形式で列挙し、粒度は「1ケース = 1つの振る舞い」を目安とする。
 
 ### 2. テストの優先順位
 
-**最初に書くテスト**（シンプルなものから）：
+シンプルなものから着手する:
 
 1. 正常系の最も基本的なケース
 2. 境界値のケース
 3. エラーケース
 
-### 3. テストの書き方
+### 3. AAA パターン（Arrange-Act-Assert）
 
-#### AAA パターン（Arrange-Act-Assert）
+各テストを以下の3段構成で記述する。コメントで明示するとテストの意図が伝わりやすい。
 
-`Arrange` `Act` `Assert` のコメントも含めて記載することで、テストの構造を明確にします。
-
-```typescript
-// TypeScript (Jest/Vitest)
-describe('UserService', () => {
-  describe('createUser', () => {
-    it('有効なデータでユーザーを作成できる', async () => {
-      // Arrange（準備）
-      const userData = {
-        email: 'test@example.com',
-        password: 'securePassword123',
-      };
-      const userService = new UserService();
-
-      // Act（実行）
-      const result = await userService.createUser(userData);
-
-      // Assert（検証）
-      expect(result.email).toBe('test@example.com');
-      expect(result.id).toBeDefined();
-    });
-  });
-});
-```
-
-```python
-# Python (pytest)
-class TestUserService:
-    def test_create_user_with_valid_data(self):
-        """有効なデータでユーザーを作成できる"""
-        # Arrange
-        user_data = {
-            "email": "test@example.com",
-            "password": "securePassword123",
-        }
-        user_service = UserService()
-
-        # Act
-        result = user_service.create_user(user_data)
-
-        # Assert
-        assert result.email == "test@example.com"
-        assert result.id is not None
-```
-
-## 🛠️ 言語別テストフレームワーク
-
-### TypeScript / JavaScript
-
-#### 推奨フレームワーク
-
-| フレームワーク | 用途           | 特徴                                 |
-| -------------- | -------------- | ------------------------------------ |
-| **Vitest**     | ユニットテスト | 高速、Vite統合、ESM対応              |
-| **Jest**       | ユニットテスト | 豊富なエコシステム、スナップショット |
-| **Playwright** | E2Eテスト      | クロスブラウザ、自動待機             |
-
-#### Vitest セットアップ
-
-```bash
-npm install -D vitest @vitest/coverage-v8
-```
-
-```typescript
-// vitest.config.ts
-import { defineConfig } from 'vitest/config';
-
-export default defineConfig({
-  test: {
-    globals: true,
-    environment: 'node', // または 'jsdom' for browser
-    coverage: {
-      provider: 'v8',
-      reporter: ['text', 'html'],
-      exclude: ['node_modules', 'test'],
-    },
-  },
-});
-```
-
-```json
-// package.json
-{
-  "scripts": {
-    "test": "vitest",
-    "test:run": "vitest run",
-    "test:coverage": "vitest run --coverage"
-  }
-}
-```
-
-#### Jest セットアップ
-
-```bash
-npm install -D jest ts-jest @types/jest
-```
-
-```javascript
-// jest.config.js
-module.exports = {
-  preset: 'ts-jest',
-  testEnvironment: 'node',
-  testMatch: ['**/*.test.ts', '**/*.spec.ts'],
-  collectCoverageFrom: ['src/**/*.ts'],
-};
-```
-
-### Python
-
-#### 推奨フレームワーク
-
-| フレームワーク     | 用途                | 特徴                     |
-| ------------------ | ------------------- | ------------------------ |
-| **pytest**         | ユニット/統合テスト | シンプル、プラグイン豊富 |
-| **pytest-asyncio** | 非同期テスト        | async/await対応          |
-| **pytest-cov**     | カバレッジ          | coverage.py統合          |
-
-#### pytest セットアップ
-
-```bash
-pip install pytest pytest-cov pytest-asyncio
-```
-
-```toml
-# pyproject.toml
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_functions = ["test_*"]
-asyncio_mode = "auto"
-
-[tool.coverage.run]
-source = ["src"]
-omit = ["tests/*"]
-```
+- **Arrange（準備）**: テスト対象・入力データ・モックの用意
+- **Act（実行）**: 対象メソッドの呼び出し
+- **Assert（検証）**: 結果の期待値比較
 
 ## 🎨 テスト設計パターン
 
-### モック・スタブの使い方
-
-#### TypeScript (Vitest/Jest)
-
-```typescript
-import { vi, describe, it, expect, beforeEach } from 'vitest';
-
-// モジュール全体をモック
-vi.mock('./database', () => ({
-  Database: vi.fn().mockImplementation(() => ({
-    query: vi.fn(),
-  })),
-}));
-
-describe('UserRepository', () => {
-  let mockDb: any;
-  let repository: UserRepository;
-
-  beforeEach(() => {
-    mockDb = {
-      query: vi.fn(),
-    };
-    repository = new UserRepository(mockDb);
-  });
-
-  it('ユーザーをIDで取得できる', async () => {
-    // Arrange
-    const mockUser = { id: '1', email: 'test@example.com' };
-    mockDb.query.mockResolvedValue([mockUser]);
-
-    // Act
-    const result = await repository.findById('1');
-
-    // Assert
-    expect(mockDb.query).toHaveBeenCalledWith(
-      'SELECT * FROM users WHERE id = ?',
-      ['1'],
-    );
-    expect(result).toEqual(mockUser);
-  });
-});
-```
-
-#### Python (pytest)
-
-```python
-from unittest.mock import Mock, AsyncMock, patch
-import pytest
-
-class TestUserRepository:
-    @pytest.fixture
-    def mock_db(self):
-        return Mock()
-
-    @pytest.fixture
-    def repository(self, mock_db):
-        return UserRepository(mock_db)
-
-    def test_find_user_by_id(self, repository, mock_db):
-        # Arrange
-        mock_user = {"id": "1", "email": "test@example.com"}
-        mock_db.query.return_value = [mock_user]
-
-        # Act
-        result = repository.find_by_id("1")
-
-        # Assert
-        mock_db.query.assert_called_once_with(
-            "SELECT * FROM users WHERE id = ?", ("1",)
-        )
-        assert result == mock_user
-
-    @pytest.mark.asyncio
-    async def test_async_operation(self, repository, mock_db):
-        # 非同期モック
-        mock_db.async_query = AsyncMock(return_value=[])
-
-        result = await repository.find_all_async()
-
-        assert result == []
-```
-
 ### テストダブルの種類
 
-| 種類     | 用途                     | 例                                        |
-| -------- | ------------------------ | ----------------------------------------- |
-| **Stub** | 固定値を返す             | `mockDb.query.mockReturnValue([])`        |
-| **Mock** | 呼び出しを検証           | `expect(mockDb.query).toHaveBeenCalled()` |
-| **Spy**  | 実際の実装を呼びつつ監視 | `vi.spyOn(obj, 'method')`                 |
-| **Fake** | 簡易版の実装             | インメモリDB                              |
+| 種類     | 用途                     | 使いどころ                                  |
+| -------- | ------------------------ | ------------------------------------------- |
+| **Stub** | 固定値を返す             | 依存先の返り値を固定したいとき              |
+| **Mock** | 呼び出しを検証           | 依存先が正しく呼ばれたか確認したいとき      |
+| **Spy**  | 実際の実装を呼びつつ監視 | 本物の挙動を保ちつつ呼び出し記録を残したい  |
+| **Fake** | 簡易版の実装             | インメモリDBなど本物の代替で統合的に試したい |
 
-### テストフィクスチャ
+### フィクスチャ
 
-#### TypeScript
+テストデータ生成は **ファクトリ関数 / fixture** を用意し、`overrides` で個別ケースの差分だけを記述する。テスト間でデータを使い回す場合でも依存関係を生まないよう毎回新しいインスタンスを返すこと。
 
-```typescript
-// fixtures/users.ts
-export const createTestUser = (overrides = {}) => ({
-  id: 'test-id',
-  email: 'test@example.com',
-  name: 'Test User',
-  createdAt: new Date('2024-01-01'),
-  ...overrides,
-});
+### モック利用の指針
 
-// テストで使用
-it('ユーザー情報を更新できる', async () => {
-  const user = createTestUser({ name: 'Original Name' });
-  // ...
-});
-```
-
-#### Python
-
-```python
-# conftest.py
-import pytest
-from datetime import datetime
-
-@pytest.fixture
-def test_user():
-    return {
-        "id": "test-id",
-        "email": "test@example.com",
-        "name": "Test User",
-        "created_at": datetime(2024, 1, 1),
-    }
-
-@pytest.fixture
-def create_test_user():
-    def _create(**overrides):
-        base = {
-            "id": "test-id",
-            "email": "test@example.com",
-            "name": "Test User",
-        }
-        return {**base, **overrides}
-    return _create
-```
+- 外部 I/O（DB / HTTP / ファイルシステム）は原則モック
+- ただしモックが多すぎると統合面の不具合を見逃すため、結合テストでバランスを取る
+- プロダクションコード側の実装詳細（private メソッド呼び出し等）は検証しない
 
 ## 📊 テストカバレッジ
 
@@ -365,20 +139,12 @@ def create_test_user():
 
 ### 避けるべきこと
 
-1. **実装後にテストを書く**
-   - TDDの利点（設計改善、仕様の明確化）が失われる
-
-2. **一度に大きなテストを書く**
-   - 小さく、インクリメンタルに進める
-
-3. **テストの過剰な詳細化**
-   - 実装の詳細ではなく、振る舞いをテスト
-
-4. **モックの過剰使用**
-   - 統合テストとのバランスを取る
-
-5. **テストの重複**
-   - 同じことを複数のテストで検証しない
+1. **実装後にテストを書く** — TDDの利点（設計改善、仕様の明確化）が失われる
+2. **一度に大きなテストを書く** — 小さく、インクリメンタルに進める
+3. **テストの過剰な詳細化** — 実装の詳細ではなく、振る舞いをテスト
+4. **モックの過剰使用** — 統合テストとのバランスを取る
+5. **テストの重複** — 同じことを複数のテストで検証しない
+6. **テストの偽装 passing** — `skip` / `todo` / assertion の緩和で無理やり通さない
 
 ### 良いテストの特徴（FIRST原則）
 
@@ -388,85 +154,48 @@ def create_test_user():
 - **S**elf-validating（自己検証）: 成功/失敗が明確
 - **T**imely（適時）: プロダクションコードの前に書く
 
-## 🔧 実装時のTDDワークフロー
+## 🔧 Red-Green-Refactor 詳解（個別エージェント向け）
 
-### `@web-api-implementer` / `@web-ui-implementer` での TDD 手順
+tester / implementer エージェントがテストケース単位で繰り返す手順:
 
-1. **テストファイルの作成**
+1. **テストファイルの作成/編集（tester のみ）**
    - プロダクションコードより先にテストファイルを作成
-   - ファイル命名: `*.test.ts` / `test_*.py`
+   - ファイル命名はプロジェクトの既存パターンに従う
 
-2. **最初のテストを書く（RED）**
+2. **失敗するテストを書く（RED / tester）**
+   - 期待する振る舞いを assertion で記述
+   - 1回のサイクルで書くのは最小単位のテスト1つ
 
-   ```typescript
-   it('should return empty array when no users exist', async () => {
-     const service = new UserService();
-     const result = await service.findAll();
-     expect(result).toEqual([]);
-   });
-   ```
+3. **テストを実行して失敗を確認（tester）**
+   - 全ケースが意図した assertion で failing していること
+   - 構文エラー/インポートエラーによる失敗ではないこと
+   - 実行ログを保存して implementer に引き継ぐ
 
-3. **テストを実行して失敗を確認**
+4. **最小限の実装（GREEN / implementer）**
+   - failing テストを通すだけの最小コードを書く
+   - 将来の拡張や汎用化は考えない
 
-   ```bash
-   npm test  # または pytest
-   ```
+5. **テストが通ることを確認（implementer）**
+   - 該当テストだけでなく、既存テストも retrograde していないこと
 
-4. **最小限の実装（GREEN）**
-
-   ```typescript
-   class UserService {
-     async findAll(): Promise<User[]> {
-       return [];
-     }
-   }
-   ```
-
-5. **テストが通ることを確認**
-
-6. **リファクタリング（REFACTOR）**
+6. **リファクタリング（REFACTOR / implementer）**
    - テストが通る状態を維持しながら改善
+   - 重複除去・命名改善・既存パターンとの整合
 
-7. **次のテストへ**
-   - 上記サイクルを繰り返す
+7. **次のテストケースへ**
+   - Step 1 に戻る
 
 ## 📝 テスト命名規約
 
-### TypeScript
+### 基本形
 
-```typescript
-describe('[テスト対象]', () => {
-  describe('[メソッド/機能]', () => {
-    it('should [期待する振る舞い] when [条件]', () => {
-      // ...
-    });
-  });
-});
+- **TypeScript**: `describe('[対象]') > describe('[メソッド/機能]') > it('should [振る舞い] when [条件]')`
+- **Python**: `class Test[対象]: def test_[メソッド]_[振る舞い]_when_[条件]`
 
-// 例
-describe('UserService', () => {
-  describe('createUser', () => {
-    it('should create user when valid data provided', () => {});
-    it('should throw ValidationError when email is invalid', () => {});
-    it('should throw DuplicateError when email already exists', () => {});
-  });
-});
-```
+### ポイント
 
-### Python
-
-```python
-class TestUserService:
-    """UserService のテスト"""
-
-    def test_create_user_with_valid_data(self):
-        """有効なデータでユーザーを作成できる"""
-        pass
-
-    def test_create_user_raises_validation_error_when_email_invalid(self):
-        """無効なメールアドレスでValidationErrorが発生する"""
-        pass
-```
+- 「何をテストしているか」「どんな条件か」「期待される結果は何か」が名前から読める状態を目指す
+- 実装関数名等をそのまま使うのではなく、**振る舞い**を記述する
 
 ---
 
