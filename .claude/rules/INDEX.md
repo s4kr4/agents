@@ -9,7 +9,6 @@
 | TDD | `tdd.md` | コード実装時（**常時**） |
 | コーディング規約 | `coding-standards.md` | コード実装時 |
 | セキュリティ | `security.md` | コード実装時、レビュー時 |
-| エラーハンドリング | `error-handling.md` | エラー処理の実装時 |
 | エラー対応 | `error-recovery.md` | 作業中にエラーが発生した時 |
 | パフォーマンス | `performance.md` | 最適化が必要な時 |
 | ファイル操作 | `file-operations.md` | ファイルの作成・削除・移動・リネーム時 |
