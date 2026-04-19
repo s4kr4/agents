@@ -1,6 +1,6 @@
 ---
 name: memory
-description: 複数の LLM 実行環境で共有するローカルメモリ基盤を扱うときに使う。memory/memory.py、SQLite スキーマ、hook、起動ラッパーを確認し、現行コンテキスト取得、履歴横断検索、保存不具合の切り分けを、event / observation / memory の役割を保ちながら進める。
+description: 複数の LLM 実行環境で共有するローカルメモリ基盤を扱うときに使う。memory.py、SQLite スキーマ、hook、起動ラッパーの確認と、コンテキスト取得・履歴検索・保存不具合の切り分けを行う。Use when user says "メモリの設定", "記憶が保存されない", "memory.py", "メモリDB", or "/memory".
 ---
 
 # Memory

@@ -1,6 +1,6 @@
 ---
 name: insight-capture
-description: 作業中に得た知見をスキルとして保存・既存スキルに統合するための対話フロー。新たな知見に気づいたとき、またはセッション終了時に使用する。
+description: 作業中に得た知見をスキルとして保存・既存スキルに統合するための対話フロー。Use when user says "知見を保存", "これスキルにしたい", "学んだことを記録", "capture insight", or "/insight-capture". Also use at session end when notable patterns were discovered.
 ---
 
 # Insight Capture — 知見のキャプチャフロー

@@ -1,6 +1,6 @@
 ---
 name: skill-improve
-description: スキルのフィードバックを分析してSKILL.mdを改善するスキル。フィードバックファイルと使用ログを読み込み、改善案を提示してユーザー承認後にSKILL.mdを更新する。
+description: スキルのフィードバックを分析してSKILL.mdを改善するスキル。フィードバックファイルと使用ログを読み込み、改善案を提示してユーザー承認後にSKILL.mdを更新する。Use when user says "スキルを改善", "SKILL.mdを直して", "スキルの品質向上", "improve skill", or "/skill-improve".
 ---
 
 ## 概要

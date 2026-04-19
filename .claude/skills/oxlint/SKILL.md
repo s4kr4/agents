@@ -1,6 +1,6 @@
 ---
 name: oxlint
-description: Oxlintを使ったTypeScript/JavaScript向けのリント・フォーマット設定ガイド。oxlintと@stylistic/eslint-pluginを組み合わせた設定。モノレポのルート共有設定パターンも提供。
+description: Oxlintを使ったTypeScript/JavaScript向けのリント・フォーマット設定ガイド。oxlintと@stylistic/eslint-pluginを組み合わせた設定。モノレポのルート共有設定パターンも提供。Use when user says "oxlint設定", "oxlintを導入", "ESLintからoxlintに移行", or "/oxlint".
 ---
 
 # Oxlint Linter & Formatter Configuration
