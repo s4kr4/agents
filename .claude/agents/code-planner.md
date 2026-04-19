@@ -1,7 +1,7 @@
 ---
 name: code-planner
 description: Implementation planning specialist. This agent designs implementation plans using plan mode after investigation is complete.
-model: sonnet
+model: opus
 color: purple
 tools: Read, Grep, Glob, WebFetch, WebSearch, EnterPlanMode, ExitPlanMode
 ---

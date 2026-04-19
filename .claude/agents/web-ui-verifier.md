@@ -43,6 +43,7 @@ tools: Bash, Read, Glob, Write, Skill
 | スキル           | 参照タイミング                                        |
 | ---------------- | ----------------------------------------------------- |
 | `playwright-cli` | **常時** - すべてのブラウザ操作はこのスキル経由で行う |
+| `/ui-debug`      | 表示バグ・レスポンシブ問題の検証時                    |
 
 **重要**: このエージェントはブラウザ操作に `npm` 版 Playwright（`@playwright/test` 等）を使用しない。すべて `playwright-cli` コマンド経由で実行する。プロジェクトに `@playwright/test` が導入されていなくても動作すること。
 
@@ -99,6 +100,38 @@ playwright-cli -s=verify screenshot --filename=.playwright/screenshots/mobile.pn
 
 各リサイズ後にレイアウト崩れがないか `playwright-cli -s=verify snapshot` で構造を確認する。
 
+### Step 3.5: クロスビューポート視覚一致チェック
+
+Step 3 で取得したスクリーンショットを比較し、viewport 間の視覚的一致を検証する。
+
+#### 検証順序（必ずこの順で実施）
+
+1. **スクリーンショット比較**（各viewport間で見える内容が同じか）
+2. **差異がある場合、eval で数値検証**（scrollLeft, getBoundingClientRect等）
+3. **DOM構造の一致確認**
+
+> **判定原則**: DOM 上のデータが同一でも、**見える内容が異なれば不合格**。「overflow で隠れているだけ」は不合格理由になる（ユーザーにとって見えないのは存在しないのと同じ）。
+
+#### 必須チェック項目
+
+- スクロールなしで最初に見える要素が各 viewport で同じか
+- `overflow-x-auto` コンテナの場合、`scrollLeft=0` の状態で先頭要素が左端から表示されているか
+- 表示件数が viewport によって異なっていないか
+
+```bash
+# 各 viewport で先頭要素の位置を数値確認する
+playwright-cli -s=verify eval "document.querySelector('[data-testid=first-item]')?.getBoundingClientRect().left"
+playwright-cli -s=verify eval "document.querySelector('[role=region]')?.scrollLeft"
+```
+
+#### よくある原因パターン
+
+| 症状 | 原因 |
+|------|------|
+| モバイルで先頭が隠れる | `justify-center` + `overflow` |
+| viewport 切替で件数が変わる | レスポンシブ条件分岐 |
+| スクロール位置がずれる | `scrollIntoView` / focus 制御 |
+
 ### Step 4: インタラクション確認
 
 変更に関連するユーザー操作を snapshot で取得した ref（`e1`, `e2`, ...）を使って実行する:
@@ -149,6 +182,13 @@ playwright-cli -s=verify close
 
 以下の出力形式に従ってレポートを作成する。
 
+> **レスポンシブ検証の合否判定**:
+>
+> 以下のいずれかに該当する場合は **不合格** とする:
+> - 異なる viewport のスクリーンショットで、最初に見えるコンテンツが異なる
+> - overflow コンテナの scrollLeft が viewport 間で異なる初期値を持つ
+> - スクリーンショットに映っていない（隠れている）要素を「存在する」と判定した
+
 ## 📄 出力形式
 
 ```markdown
@@ -161,6 +201,7 @@ playwright-cli -s=verify close
 | 視覚的確認 | ✅ / ❌ |
 | インタラクション | ✅ / ❌ |
 | レスポンシブ | ✅ / ❌ |
+| クロスビューポート視覚一致 | ✅ / ❌ / N/A |
 | アクセシビリティ | ✅ / ❌ |
 | ビジュアルリグレッション | ✅ / ❌ / N/A |
 
