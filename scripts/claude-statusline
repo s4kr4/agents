@@ -91,20 +91,19 @@ section_tokens="$(ink purple "⛁ $token_display")"
 # レートリミットセクション
 section_rate="$(ink256 208 "⚡ $rate_display")"
 
-# 未処理フィードバック件数セクション
+# セパレーター
+sep="$(ink cyan "│")"
+
+# 未処理フィードバック件数セクション（has_signals: true のファイルのみカウント）
 fb_count=0
 if [ -d "${current_dir}/.claude/skills" ]; then
-    fb_count=$(find "${current_dir}/.claude/skills" -path "*/feedback/*.md" -not -path "*/applied/*" 2>/dev/null | wc -l |
- tr -d ' ')
+    fb_count=$(grep -rl "has_signals: true" "${current_dir}/.claude/skills"/*/feedback/*.md 2>/dev/null | grep -v "/applied/" | wc -l | tr -d ' ')
 fi
 if [ "$fb_count" -gt 0 ]; then
     section_fb=" ${sep} $(ink256 214 "FB:${fb_count}")"
 else
     section_fb=""
 fi
-
-# セパレーター
-sep="$(ink cyan "│")"
 
 # ステータスライン出力
 # 1行目: user@host │ dirname@branchname │ モデル名
