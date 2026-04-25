@@ -13,29 +13,63 @@ if [ -z "$transcript_path" ] || [ ! -f "$transcript_path" ]; then
   exit 0
 fi
 
-skills=$(jq -r '
-  select(.type == "assistant")
-  | .message.content[]?
-  | select(.type == "tool_use" and .name == "Skill")
-  | .input.skill
-' "$transcript_path" 2>/dev/null | sort -u) || exit 0
+# --- スキル使用の検出（メイン + サブエージェント） ---
+
+extract_skills() {
+  jq -r '
+    select(.type == "assistant")
+    | .message.content[]?
+    | select(.type == "tool_use" and .name == "Skill")
+    | .input.skill
+  ' "$1" 2>/dev/null
+}
+
+# メインの transcript からスキルを抽出
+skills=$(extract_skills "$transcript_path")
+
+# サブエージェントの transcript からもスキルを抽出
+subagents_dir="${transcript_path%.jsonl}/subagents"
+if [ -d "$subagents_dir" ]; then
+  for sa_transcript in "$subagents_dir"/*.jsonl; do
+    [ -f "$sa_transcript" ] || continue
+    sa_skills=$(extract_skills "$sa_transcript")
+    if [ -n "$sa_skills" ]; then
+      skills=$(printf '%s\n%s' "$skills" "$sa_skills")
+    fi
+  done
+fi
+
+skills=$(printf '%s' "$skills" | sort -u | grep -v '^$')
 
 [ -z "$skills" ] && exit 0
 
 # --- シグナル抽出 ---
 
-# 1. 不満・やり直しシグナルを含むユーザーメッセージを抽出
-dissatisfaction_signals=$(jq -r '
-  select(.type == "user")
-  | .message.content
-  | if type == "string" then .
-    elif type == "array" then map(select(.type == "text") | .text) | join("")
-    else ""
-    end
-  | select(
-      test("やり直し|違う|うまくいかない|動かない|おかしい|間違|ダメ|だめ|修正して|直して|そうじゃな|not working|wrong|fix|redo|broken|doesn.t work"; "i")
-    )
-' "$transcript_path" 2>/dev/null | head -c 2000)
+# 全 transcript ファイルの一覧を構築（メイン + サブエージェント）
+all_transcripts="$transcript_path"
+if [ -d "$subagents_dir" ]; then
+  for sa in "$subagents_dir"/*.jsonl; do
+    [ -f "$sa" ] && all_transcripts="$all_transcripts $sa"
+  done
+fi
+
+# 1. 不満・やり直しシグナルを含むユーザーメッセージを抽出（全 transcript から）
+dissatisfaction_signals=""
+for t in $all_transcripts; do
+  signals=$(jq -r '
+    select(.type == "user")
+    | .message.content
+    | if type == "string" then .
+      elif type == "array" then map(select(.type == "text") | .text) | join("")
+      else ""
+      end
+    | select(
+        test("やり直し|違う|うまくいかない|動かない|おかしい|間違|ダメ|だめ|修正して|直して|そうじゃな|not working|wrong|fix|redo|broken|doesn.t work"; "i")
+      )
+  ' "$t" 2>/dev/null)
+  [ -n "$signals" ] && dissatisfaction_signals="${dissatisfaction_signals}${signals}\n"
+done
+dissatisfaction_signals=$(printf '%s' "$dissatisfaction_signals" | head -c 2000)
 
 # 2. Skill 呼び出し直後のユーザー応答を抽出（承認/却下/修正指示のシグナル）
 # uuid を使って Skill 呼び出し後の最初のユーザーメッセージを取得
