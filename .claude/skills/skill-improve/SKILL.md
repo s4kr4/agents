@@ -22,7 +22,10 @@ description: スキルのフィードバックを分析してSKILL.mdを改善�
 
 **`$ARGUMENTS` が未指定の場合**: 自動スキャンモードで動作する。
 
-1. `{cwd}/.claude/skills/*/feedback/` を走査し、`applied/` を除く `.md` ファイルを持つスキルを列挙する
+1. `{cwd}/.claude/skills/*/feedback/` を走査し、`applied/` を除く `.md` ファイルを持つスキルを列挙する。ただし以下は走査・改善対象から除外する:
+   - スキル名にコロン (`:`) を含むスキル（plugin skill: `codex:setup` など）
+   - `~/.claude/skills/<name>/SKILL.md` および `{cwd}/.claude/skills/<name>/SKILL.md` のいずれも存在しないスキル（Claude Code 組み込み skill: `update-config`, `review`, `init` など）
+   - Stop フックが既にこれらをフィルタするため feedback ファイル自体が作られないはずだが、念のためドキュメントとして明示する
 2. 各スキルについて、シグナルを持つフィードバック（`has_signals: true` または手動作成）の件数をカウントする
 3. 結果をサマリー表示する:
 

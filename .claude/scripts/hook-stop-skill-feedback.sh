@@ -43,6 +43,25 @@ skills=$(printf '%s' "$skills" | sort -u | grep -v '^$')
 
 [ -z "$skills" ] && exit 0
 
+# --- ユーザー導入スキルのみにフィルタ ---
+filtered_skills=""
+while IFS= read -r skill; do
+  [ -z "$skill" ] && continue
+  # コロンを含む場合は plugin skill として除外
+  case "$skill" in
+    *:*) continue ;;
+  esac
+  # SKILL.md がユーザー領域に存在しない場合は除外
+  if [ ! -f "${cwd}/.claude/skills/${skill}/SKILL.md" ] && \
+     [ ! -f "${HOME}/.claude/skills/${skill}/SKILL.md" ]; then
+    continue
+  fi
+  filtered_skills="${filtered_skills}${skill}"$'\n'
+done <<< "$skills"
+skills=$(printf '%s' "$filtered_skills" | grep -v '^$')
+
+[ -z "$skills" ] && exit 0
+
 # --- シグナル抽出 ---
 
 # 全 transcript ファイルの一覧を構築（メイン + サブエージェント）
