@@ -37,12 +37,16 @@
       "Bash(git push *)",
       "Bash(git reset *)",
       "Bash(git clean *)",
-      "Read(.env.*)",
-      "Read(**/.env*)",
+      "Read(.env)",
+      "Read(.env.!(example))",
+      "Read(**/.env)",
+      "Read(**/.env.!(example))",
       "Read(id_rsa)",
       "Read(id_ed25519)",
-      "Write(.env*)",
-      "Write(**/.env*)",
+      "Write(.env)",
+      "Write(.env.!(example))",
+      "Write(**/.env)",
+      "Write(**/.env.!(example))",
       "Write(**/secrets/**)"
     ],
     "ask": [],
@@ -115,5 +119,8 @@
   "sandbox": {
     "enabled": false
   },
-  "skipDangerousModePermissionPrompt": true
+  "editorMode": "vim",
+  "remoteControlAtStartup": true,
+  "agentPushNotifEnabled": true,
+  "skipAutoPermissionPrompt": true
 }
