@@ -14,7 +14,7 @@ map_counterpart() {
     local rel skill rest
 
     case "$path" in
-        .claude/skills/INDEX.md|.claude/skills/_tracker/*|.claude/agents/INDEX.md)
+        .claude/skills/_tracker/*)
             return 1
             ;;
         .claude/skills/*)
@@ -91,6 +91,12 @@ collect_state() {
             fi
             issues["$path"]="update and stage $counterpart"
         else
+            # ソースの削除がステージ済みで、対応先がインデックス上にも存在しないなら
+            # 両側不在＝同期済みとみなす
+            if ! git diff --cached --quiet --diff-filter=D -- "$path" \
+                && ! git ls-files --error-unmatch "$counterpart" >/dev/null 2>&1; then
+                continue
+            fi
             issues["$path"]="create and stage $counterpart"
         fi
     done
