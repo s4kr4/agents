@@ -1,6 +1,7 @@
 ---
 name: linux-diag
 description: Linux系OSのシステム不具合診断スキル。システムが遅い、応答しない、エラーが発生する等の問題調査時に使用。CPU、メモリ、ディスク、ネットワーク、プロセス、サービス、ログ、GPU/NVIDIA、グラフィック/xrdp、Docker/コンテナの診断コマンドとフローチャートを提供。
+compatibility: Linux only. Requires systemctl, journalctl, ss, lsblk, etc.
 ---
 
 # Linux System Diagnostics Skill
