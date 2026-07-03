@@ -171,6 +171,8 @@ function Counter() {
 
 ### useEffect
 
+> **注記**: データフェッチは TanStack Query 等の専用ライブラリを優先する（[データフェッチングのカスタムフック](#データフェッチングのカスタムフック)参照）。以下は依存を増やせない場合の基本形であり、競合状態（古いリクエストの結果で新しい状態を上書きしてしまう）を防ぐため `AbortController` を必ず併用する。
+
 ```typescript
 import { useEffect, useState } from 'react';
 
@@ -178,21 +180,32 @@ function UserProfile({ userId }: { userId: string }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // ✅ useEffect: 副作用処理
+  // ✅ useEffect: 副作用処理（AbortController で競合状態を防ぐ）
   useEffect(() => {
+    const controller = new AbortController();
+
     const fetchUser = async () => {
       setLoading(true);
       try {
-        const data = await getUserById(userId);
+        const data = await getUserById(userId, { signal: controller.signal });
         setUser(data);
       } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          return; // クリーンアップによる中断は無視する
+        }
         console.error('Failed to fetch user:', error);
       } finally {
-        setLoading(false);
+        if (!controller.signal.aborted) {
+          setLoading(false); // abort 済みなら旧リクエストの finally で状態を触らない（新リクエストとの競合防止）
+        }
       }
     };
 
     fetchUser();
+
+    return () => {
+      controller.abort(); // userId が変わった/アンマウント時に古いリクエストを中断
+    };
   }, [userId]); // 依存配列を適切に指定
 
   // ✅ クリーンアップ関数
@@ -251,6 +264,44 @@ function ProductList({ products }: { products: Product[] }) {
         ))}
       </ul>
     </div>
+  );
+}
+```
+
+### ref as prop
+
+```typescript
+// ❌ 悪い例: forwardRef を新規使用（React 19+ では不要・非推奨）
+import { forwardRef } from 'react';
+
+interface InputProps {
+  label: string;
+}
+
+const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
+  { label },
+  ref,
+) {
+  return (
+    <label>
+      {label}
+      <input ref={ref} />
+    </label>
+  );
+});
+
+// ✅ 良い例: React 19+ では ref を通常の props として受け取れる
+interface InputProps {
+  label: string;
+  ref?: React.Ref<HTMLInputElement>;
+}
+
+function Input({ label, ref }: InputProps) {
+  return (
+    <label>
+      {label}
+      <input ref={ref} />
+    </label>
   );
 }
 ```
@@ -396,6 +447,37 @@ export function useTheme() {
 
 ---
 
+## use()
+
+`use()` は Promise や Context を読み取れる React 19+ の API。通常のフックと異なり、条件分岐やループの中でも呼び出せる。
+
+```typescript
+// ✅ use() で Context を条件分岐内でも読み取る
+function ThemedButton({ show }: { show: boolean }) {
+  if (!show) return null;
+
+  // 通常の useContext ならここでは呼べないが、use() は条件分岐内でも呼べる
+  const { theme } = use(ThemeContext)!;
+  return <button className={`btn-${theme}`}>Click</button>;
+}
+
+// ✅ use() で Promise を読み取る（Suspense と併用）
+function UserName({ userPromise }: { userPromise: Promise<User> }) {
+  const user = use(userPromise); // 解決するまで Suspense がフォールバックを表示
+  return <span>{user.name}</span>;
+}
+
+function UserNameSection({ userPromise }: { userPromise: Promise<User> }) {
+  return (
+    <Suspense fallback={<span>Loading...</span>}>
+      <UserName userPromise={userPromise} />
+    </Suspense>
+  );
+}
+```
+
+---
+
 ## useReducer による状態管理
 
 ```typescript
@@ -506,6 +588,63 @@ export class ErrorBoundary extends React.Component<
 ---
 
 ## フォームハンドリング
+
+### Actions（React 19+、推奨）
+
+```typescript
+// ✅ useActionState でフォーム送信・エラー・pending 状態を管理
+import { useActionState } from 'react';
+
+interface FormState {
+  error: string | null;
+  success: boolean;
+}
+
+async function submitAction(
+  _previousState: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  const email = formData.get('email');
+  if (typeof email !== 'string' || !email.includes('@')) {
+    return { error: 'メールアドレスの形式が正しくありません', success: false };
+  }
+
+  try {
+    await registerUser(email);
+    return { error: null, success: true };
+  } catch {
+    return { error: '登録に失敗しました', success: false };
+  }
+}
+
+function SignupForm() {
+  const [state, formAction, isPending] = useActionState(submitAction, {
+    error: null,
+    success: false,
+  });
+
+  return (
+    <form action={formAction}>
+      <input name="email" type="email" required />
+      <button type="submit" disabled={isPending}>
+        {isPending ? '送信中...' : '登録'}
+      </button>
+      {state.error && <p role="alert">{state.error}</p>}
+      {state.success && <p>登録が完了しました</p>}
+    </form>
+  );
+}
+```
+
+ポイント:
+- `<form action={formAction}>` に渡すことでフォーム送信を Action として扱える
+- `useActionState` が pending 状態・戻り値（エラー等）を管理してくれるため、個別に `useState` で追い回す必要がない
+- 送信中インジケータのみが必要な子コンポーネントには `useFormStatus` を使う
+- 楽観的更新（送信結果を待たずに UI を先行更新）が必要な場合は `useOptimistic` を併用する
+
+### 制御コンポーネントの基本形
+
+単純な入力値の同期（送信を伴わないリアルタイムバリデーション等）には、従来通り `useState` ベースの制御コンポーネントも有効。
 
 ```typescript
 // ✅ 汎用的なフォームフック

@@ -67,6 +67,11 @@ React実装の逆引きリファレンスです。「〜したいとき」から
   - `useCallback` でコールバック関数をメモ化
   - `useMemo` で高コストな計算をメモ化
 
+### 5. Server Components との関係
+
+- Server Components を使うフレームワーク（Next.js App Router 等）では、このスキルの Hooks パターン（`useState`/`useEffect`/`useActionState` 等）はすべてクライアントコンポーネント（`"use client"`）前提である
+- サーバーコンポーネント側でこれらのフックを直接使うことはできない
+
 ---
 
 ## 逆引きリファレンス
@@ -79,6 +84,7 @@ React実装の逆引きリファレンスです。「〜したいとき」から
 | エクスポートしたい | 名前付きエクスポート（`export function`）を使う | [PATTERNS: 名前付きエクスポート](PATTERNS.md#名前付きエクスポート推奨) |
 | 再利用可能なリストを作りたい | ジェネリックPropsでレンダー関数を受け取る | [PATTERNS: ジェネリックProps](PATTERNS.md#ジェネリックprops) |
 | ランタイムエラーをキャッチしたい | ErrorBoundary（クラスコンポーネント）を使う | [PATTERNS: エラーバウンダリ](PATTERNS.md#エラーバウンダリ) |
+| ref を親から受け取りたい | React 19+ では ref は通常の props として受け取れる（`forwardRef` は不要・非推奨） | [PATTERNS: ref as prop](PATTERNS.md#ref-as-prop) |
 
 ### Propsの型を定義したい
 
@@ -96,6 +102,7 @@ React実装の逆引きリファレンスです。「〜したいとき」から
 | 複雑な状態遷移を管理したい | `useReducer` でAction/Reducerパターンを使う | [PATTERNS: useReducer](PATTERNS.md#usereducer-による状態管理) |
 | グローバル状態を共有したい | Context API + カスタムフック | [PATTERNS: Context API](PATTERNS.md#context-api) |
 | Prop drilling を解消したい | Context API を活用 | [PATTERNS: Context API](PATTERNS.md#context-api) |
+| Promise / Context を読みたい | `use()` を使う（条件分岐内でも呼べる唯一のフック的 API。Promise は Suspense と併用） | [PATTERNS: use()](PATTERNS.md#use) |
 
 **選択基準**: ローカル → `useState` / 複雑なロジック → `useReducer` / 複数コンポーネント間共有 → Context or Jotai/Zustand
 
@@ -103,10 +110,11 @@ React実装の逆引きリファレンスです。「〜したいとき」から
 
 | やりたいこと | 方法 | 詳細 |
 |---|---|---|
-| マウント時にデータを取得したい | `useEffect` + 依存配列 | [PATTERNS: useEffect](PATTERNS.md#useeffect) |
+| マウント時にデータを取得したい | ①フレームワークのデータローダー（Next.js の loader 等）や TanStack Query 等の専用ライブラリを優先 ②どうしても依存を増やせない小規模ケースのみ素の `useEffect`（クリーンアップと競合状態対策必須） | [PATTERNS: useEffect](PATTERNS.md#useeffect) |
 | サブスクリプションを管理したい | `useEffect` のクリーンアップ関数で解除 | [PATTERNS: useEffect](PATTERNS.md#useeffect) |
-| データフェッチングを共通化したい | カスタムフック `useFetch<T>` を作る | [PATTERNS: データフェッチング](PATTERNS.md#データフェッチングのカスタムフック) |
+| データフェッチングを共通化したい | カスタムフック `useFetch<T>` を作る（TanStack Query 導入前提であればそちらを優先） | [PATTERNS: データフェッチング](PATTERNS.md#データフェッチングのカスタムフック) |
 | キャッシュ付きデータ取得をしたい | TanStack Query を使う | [PATTERNS: TanStack Query](PATTERNS.md#tanstack-query-を使う場合) |
+| フォーム送信を処理したい | Actions（`<form action={fn}>`）＋ `useActionState`。送信中状態は `useFormStatus`、楽観的更新は `useOptimistic` | [PATTERNS: フォームハンドリング](PATTERNS.md#フォームハンドリング) |
 
 ### ロジックを分離・共通化したい
 
@@ -162,6 +170,7 @@ React コード実装後、以下を確認:
 - [ ] 不要な再レンダリングが発生していない
 - [ ] エラーバウンダリが必要な箇所に実装されている
 - [ ] アクセシビリティ（ARIA属性、セマンティックHTML）が考慮されている
+- [ ] React 19+ で `forwardRef` を新規使用していない（ref は通常の props として受け取る）
 
 ---
 
