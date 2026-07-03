@@ -55,11 +55,11 @@ tools: Bash, Read, Glob, Write, Skill
 - `playwright-cli` が利用可能か確認する:
 
   ```bash
-  playwright-cli --version || npx --no-install playwright-cli --version
+  command -v playwright-cli
   ```
 
-  - グローバルで使えればそのまま `playwright-cli` を、ローカル版のみ存在する場合は `npx playwright-cli` を以降すべてのコマンドで使用する
-  - どちらも利用できない場合は**自己判断でインストールせず**、ユーザーに報告して判断を仰ぐ（`~/.claude/rules/error-recovery.md` に従う）
+  - 見つかった場合はそのまま `playwright-cli` を以降すべてのコマンドで使用する
+  - 見つからない場合は**自己判断でインストールを試みず**、`npm install -g @playwright/cli@latest` のグローバルインストールが必要である旨をオーケストレーターに報告し、タスクを中断する（`~/.claude/rules/error-recovery.md` に従う）
 - 作業用のスクリーンショット保存先を決定する
   - プロジェクト規定のディレクトリがあればそこを使用する
   - 規定がなければ `(project_root)/.playwright/screenshots` を使用する

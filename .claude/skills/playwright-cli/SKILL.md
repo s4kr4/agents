@@ -1,8 +1,8 @@
 ---
 name: playwright-cli
 description: ブラウザ操作の自動化、Webページのテスト、Playwrightテストの作成・実行。スクリーンショット取得、フォーム操作、E2Eテストを提供。Use when user says "ブラウザで確認", "スクリーンショット", "E2Eテスト", "playwright", "ブラウザテスト", or "/playwright-cli".
-allowed-tools: Bash(playwright-cli:*) Bash(npx:*) Bash(npm:*)
-compatibility: Requires Node.js and npx. Chromium is auto-installed by playwright-cli.
+allowed-tools: Bash(playwright-cli:*) Bash(npm:*)
+compatibility: Requires Node.js and a global `playwright-cli` install (`npm install -g @playwright/cli@latest`). Chromium is auto-installed by playwright-cli.
 ---
 
 # Browser Automation with playwright-cli
@@ -276,17 +276,15 @@ playwright-cli kill-all
 
 ## Installation
 
-If global `playwright-cli` command is not available, try a local version via `npx playwright-cli`:
-
-```bash
-npx --no-install playwright-cli --version
-```
-
-When local version is available, use `npx playwright-cli` in all commands. Otherwise, install `playwright-cli` as a global command:
+Install `playwright-cli` as a global command. This is the only supported installation path in this repository:
 
 ```bash
 npm install -g @playwright/cli@latest
 ```
+
+If the `playwright-cli` command is not found, do not attempt to install it yourself — ask the user to run the global install command above, then retry.
+
+> **Note on npx**: A local/npx fallback (`npx playwright-cli ...`) works only in environments where `Bash(npx *)` is permitted. This repository's `.claude/settings.json` denies `npx`, so the npx fallback cannot be used here.
 
 ## Example: Form submission
 
