@@ -17,7 +17,7 @@ description: TDD（テスト駆動開発）の手順とベストプラクティ�
 2. 対応する tester に委譲:
    - API 変更 → `@web-api-tester`
    - UI 変更 → `@web-ui-tester`
-   - 入力: 完了条件（振る舞い記述）、対象ファイル、既存パターン
+   - 入力: **フェーズの明示（Phase 3a / RED）**、完了条件（振る舞い記述）、対象ファイル、既存パターン
 3. tester からのレポートを受領:
    - テストファイル一覧
    - テストケース一覧
@@ -25,6 +25,7 @@ description: TDD（テスト駆動開発）の手順とベストプラクティ�
 4. レポートを添えて implementer に委譲:
    - API → `@web-api-implementer`
    - UI → `@web-ui-implementer`
+   - 入力: **フェーズの明示（Phase 3b / GREEN）**、tester レポート、承認済み計画のスコープ
 5. implementer から「GREEN 達成」レポートを受領
 6. 後続フェーズ（UI 検証 or safety inspector）へ
 
