@@ -1,6 +1,6 @@
 ---
 name: memory-extract
-description: セッション履歴から意味記憶を抽出し memories テーブルに保存する。未処理セッションの要約を読み、長期的に有効な知識を判断して書き込む。
+description: セッション履歴から意味記憶を抽出し memories テーブルに保存する。未処理セッションの要約を読み、長期的に有効な知識を判断して書き込む。Use when user says "記憶を抽出", "セッションから学習", "memory extract", or "/memory-extract".
 ---
 
 # Memory Extract

@@ -1,6 +1,6 @@
 ---
 name: skill-feedback
-description: スキルに対するフィードバックを収集・保存するスキル。自動収集（Stopフック）と手動トリガーの両モードをサポート。スキルの改善に役立てるため、使用感・問題点・改善提案を記録する。
+description: スキルに対するフィードバックを収集・保存するスキル。自動収集（Stopフック）と手動トリガーの両モードをサポート。Use when user says "スキルのフィードバック", "このスキルの問題点", "スキルがうまく動かない", "skill feedback", or "/skill-feedback".
 ---
 
 ## 動作モード
@@ -26,6 +26,12 @@ description: スキルに対するフィードバックを収集・保存する�
 `$ARGUMENTS` から対象スキル名を取得する。未指定の場合は、以下のようにユーザーに確認する。
 
 > どのスキルに対するフィードバックを記録しますか？（例: `tdd`, `ts-implement`）
+
+> **対象外スキルについて**: 以下に該当するスキルは処理をスキップし、feedback ファイルを作成しない。
+> - スキル名にコロン (`:`) を含む（plugin skill: `codex:setup` など）
+> - `~/.claude/skills/<name>/SKILL.md` および `{cwd}/.claude/skills/<name>/SKILL.md` のいずれも存在しない（Claude Code 組み込み skill: `update-config`, `review`, `init` など）
+>
+> これらは SKILL.md がユーザー領域にないため改善対象にならず、ノイズになるため除外する。
 
 ### 2. セッション分析・フィードバック生成
 
