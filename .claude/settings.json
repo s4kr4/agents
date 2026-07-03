@@ -61,11 +61,6 @@
             "type": "command"
           },
           {
-            "command": "~/.agents/memory/hook-stop-memory.sh",
-            "statusMessage": "共有メモリ更新中...",
-            "type": "command"
-          },
-          {
             "command": "~/.agents/.claude/scripts/hook-stop-skill-feedback.sh",
             "statusMessage": "スキルフィードバック自動記録中...",
             "type": "command"

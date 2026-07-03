@@ -149,9 +149,7 @@ python3 memory/memory.py flush-queue --db memory/memory.db
 ## 保存フロー
 
 - Claude Code
-  `memory/hook-stop-memory.sh` が Stop hook として実行される。
-  1. DB に直接書き込みを試みる（`start-session` → `append-event` → `end-session`）
-  2. 失敗した場合、`queue-session` でファイルキューにフォールバックする
+  現在 Stop フックは配線されておらず、読み書きは `/shared-memory` スキル経由でモデルが必要と判断したときに行う（`memory/hook-stop-memory.sh` は未配線のまま保持している）。
 - Codex
   `memory/codex-memory-run.sh` と各ラッパーから、開始・追記・終了を呼ぶ。
 
