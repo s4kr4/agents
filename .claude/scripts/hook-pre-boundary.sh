@@ -12,7 +12,7 @@ fi
 
 real_f=$(realpath -m "$f")
 real_cwd=$(realpath "$PWD")
-real_skills=$(realpath "$HOME/.claude/skills")
+real_skills=$(realpath -m "$HOME/.claude/skills")
 real_home=$(realpath "$HOME")
 
 case "$real_f" in
@@ -20,8 +20,8 @@ case "$real_f" in
   "$real_skills"/*|"$real_skills") exit 0 ;;
 esac
 
-# TODO: $real_home に正規表現メタ文字が含まれる環境では誤マッチの可能性あり。パターン展開方式への移行を検討。
-if [[ "$real_f" =~ ^${real_home}/\.claude/projects/[^/]+/memory/ ]]; then
+# $real_home はクォートによりリテラル扱い（メタ文字を含む環境でも安全）
+if [[ "$real_f" =~ ^"$real_home"/\.claude/projects/[^/]+/memory/ ]]; then
   exit 0
 fi
 
