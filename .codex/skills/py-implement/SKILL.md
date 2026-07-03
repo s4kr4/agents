@@ -11,9 +11,9 @@ Python実装のベストプラクティス、コーディング規約、パタ�
 
 ### 1. **PEP 8 Compliance**（PEP 8準拠）
 - PEP 8スタイルガイドに従う
-- BlackとFlake8で自動フォーマット・リント
+- Ruffで自動フォーマット・リント
 - インデント: スペース4個
-- 行の長さ: 88文字（Black標準）
+- 行の長さ: 88文字（Ruff標準）
 
 ### 2. **Type Hints**（型ヒント）
 - 関数の引数と戻り値には型ヒントを使用
@@ -127,8 +127,8 @@ def process_data(value: Union[str, int]) -> Optional[str]:
 
 実装したコードは以下の基準を満たす必要があります：
 
-- ✅ PEP 8準拠（Blackでフォーマット済み）
-- ✅ Flake8エラーなし
+- ✅ PEP 8準拠（Ruffでフォーマット済み）
+- ✅ ruff check エラーなし
 - ✅ 型ヒント使用（`mypy`チェック通過）
 - ✅ Docstrings記述（関数、クラス）
 - ✅ 適切な例外処理
@@ -141,15 +141,15 @@ def process_data(value: Union[str, int]) -> Optional[str]:
 コード実装後、以下を確認してください：
 
 - [ ] PEP 8に準拠している
-- [ ] Blackでフォーマット済み
-- [ ] Flake8エラーがない
+- [ ] Ruffでフォーマット済み
+- [ ] ruff checkエラーがない
 - [ ] 型ヒントが適切に使用されている
 - [ ] Docstringsが記述されている
 - [ ] 例外処理が実装されている
 - [ ] 関数名・変数名が明確で説明的
 - [ ] エッジケースが処理されている
 - [ ] コードの重複がない
-- [ ] インポートが整理されている（isort使用）
+- [ ] インポートが整理されている（Ruffのimport整理、Iルール使用）
 - [ ] 未使用の変数やインポートがない
 
 ## 🛠️ Development Tools
@@ -157,17 +157,14 @@ def process_data(value: Union[str, int]) -> Optional[str]:
 ### フォーマットとリント
 
 ```bash
-# Black - コードフォーマット
-black yourfile.py
+# Ruff - コードフォーマット
+uv run ruff format yourfile.py
 
-# isort - インポート整理
-isort yourfile.py
-
-# Flake8 - リント
-flake8 yourfile.py
+# Ruff - リント（import整理含む、自動修正あり）
+uv run ruff check --fix yourfile.py
 
 # mypy - 型チェック
-mypy yourfile.py
+uv run mypy yourfile.py
 ```
 
 ### 設定ファイル
@@ -175,29 +172,22 @@ mypy yourfile.py
 #### pyproject.toml
 
 ```toml
-[tool.black]
+[tool.ruff]
 line-length = 88
-target-version = ['py311']
+target-version = "py312"
 
-[tool.isort]
-profile = "black"
-line_length = 88
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E203"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
 ```
 
-#### .flake8
-
-```ini
-[flake8]
-max-line-length = 88
-extend-ignore = E203, W503
-exclude = .git,__pycache__,.venv,venv,dist,build
-```
+`[tool.ruff.lint]` の `I` ルールがimport整理を担う。詳細な設定は `/py-formatter` スキルを参照。
 
 ## 🎓 Learning Resources
 
