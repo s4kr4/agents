@@ -1,6 +1,6 @@
 ---
 name: insight-capture
-description: 作業中に得た知見をスキルとして保存・既存スキルに統合するための対話フロー。新たな知見に気づいたとき、またはセッション終了時に使用する。
+description: 作業中に得た知見をスキルとして保存・既存スキルに統合するための対話フロー。Use when user says "知見を保存", "これスキルにしたい", "学んだことを記録", "capture insight", or "/insight-capture". Also use at session end when notable patterns were discovered.
 ---
 
 # Insight Capture — 知見のキャプチャフロー
@@ -30,7 +30,7 @@ description: 作業中に得た知見をスキルとして保存・既存スキ�
 
 ### Step 2: 既存スキルとの照合
 
-`~/.claude/skills/INDEX.md` を読み込み、既存スキル一覧をユーザーに提示する。
+`~/.claude/skills/` 配下の各スキルの frontmatter（name / description）を読み取り、既存スキル一覧をユーザーに提示する。
 
 > 「この知見は以下のスキルに関連していますか？
 > （関連するスキルがなければ「新規」と答えてください）
@@ -63,7 +63,7 @@ description: 作業中に得た知見をスキルとして保存・既存スキ�
 
 1. ユーザーと以下を対話的に決定する：
    - **スキル名**（kebab-case、例: `context-management`）
-   - **一行説明**（INDEX.md に載せる説明文）
+   - **一行説明**（frontmatter の description に使う説明文）
    - **スキルの用途**（いつ使うか）
 
 2. 以下のテンプレートで `~/.claude/skills/[スキル名]/SKILL.md` を作成する：
@@ -104,8 +104,6 @@ description: [一行説明]
 
 [例外・制限・気をつけること（あれば）]
 ~~~
-
-3. `~/.claude/skills/INDEX.md` にエントリを追加する
 
 ### Step 4: 保存の確認
 
