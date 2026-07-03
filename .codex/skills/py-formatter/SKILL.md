@@ -1,6 +1,6 @@
 ---
 name: py-formatter
-description: Python向けのフォーマット・リント設定ガイド。Black、flake8、isort、mypy、VSCode、Lefthook等の推奨設定を提供。プロジェクト固有の設定ファイルがない場合にこの設定を使用。
+description: Python向けのフォーマット・リント設定ガイド。Ruff（フォーマット・リント・import整理）、mypy、uv、VSCode、Lefthook等の推奨設定を提供。プロジェクト固有の設定ファイルがない場合にこの設定を使用。
 ---
 
 # Python Formatter & Linter Configuration
@@ -12,7 +12,7 @@ Python向けのフォーマット・リント設定のリファレンスです�
 **重要原則**: プロジェクト固有の設定ファイルが存在する場合は、それを優先して使用してください。
 
 ```
-1. プロジェクトルートの設定ファイル（pyproject.toml, .flake8等）
+1. プロジェクトルートの設定ファイル（pyproject.toml の [tool.ruff]、ruff.toml、.ruff.toml等）
    → 既存の設定ファイルがある場合は、それに従う
 
 2. 設定ファイルが無い場合
@@ -24,98 +24,62 @@ Python向けのフォーマット・リント設定のリファレンスです�
 ### インストール
 
 ```bash
-pip install black flake8 isort mypy
+# プロジェクト導入（開発依存として追加）
+uv add --dev ruff mypy
+
+# グローバル導入（CLIとして利用）
+uv tool install ruff
 ```
 
-## 🎨 Black設定（コードフォーマット）
+## 🎨 Ruff設定（フォーマット・リント・import整理）
+
+Ruffはフォーマット・リント・import整理（isort相当）を1つのツールで担う。
 
 ### 推奨設定 (pyproject.toml)
 
-**プロジェクトに `pyproject.toml` の `[tool.black]` セクションがない場合のみ、以下の設定を使用**:
+**プロジェクトに `pyproject.toml` の `[tool.ruff]` セクションがない場合のみ、以下の設定を使用**:
 
 ```toml
-[tool.black]
+[tool.ruff]
 line-length = 88
-target-version = ['py311']
-exclude = '''
-/(
-    \.git
-  | \.venv
-  | venv
-  | dist
-  | build
-)/
-'''
+target-version = "py312"
+exclude = [
+    ".git",
+    ".venv",
+    "venv",
+    "dist",
+    "build",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E203"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
 ```
+
+- `I` ルールを有効にすることで isort 相当のimport整理が行われる（ソート・グルーピング）
+- `target-version` はRuffでは文字列（`"py312"`）で指定する。Blackのようなリスト構文（`['py311']`）ではない点に注意
 
 ### コマンド例
 
 ```bash
 # フォーマット実行
-black yourfile.py
+uv run ruff format .
 
-# ディレクトリ全体をフォーマット
-black src/
+# リント実行（自動修正あり）
+uv run ruff check --fix .
 
 # チェックのみ（変更なし）
-black --check src/
-```
-
-## 🔍 flake8設定（リント）
-
-### 推奨設定 (.flake8)
-
-**プロジェクトに `.flake8` がない場合のみ、以下の設定を使用**:
-
-```ini
-[flake8]
-max-line-length = 88
-extend-ignore = E203, W503
-exclude =
-    .git,
-    __pycache__,
-    .venv,
-    venv,
-    dist,
-    build
-```
-
-### コマンド例
-
-```bash
-# リント実行
-flake8 yourfile.py
-
-# ディレクトリ全体をリント
-flake8 src/
-```
-
-## 📦 isort設定（インポート整理）
-
-### 推奨設定 (pyproject.toml)
-
-**プロジェクトに `pyproject.toml` の `[tool.isort]` セクションがない場合のみ、以下の設定を使用**:
-
-```toml
-[tool.isort]
-profile = "black"
-line_length = 88
-```
-
-### コマンド例
-
-```bash
-# インポート整理
-isort yourfile.py
-
-# ディレクトリ全体を整理
-isort src/
-
-# チェックのみ
-isort --check-only src/
+uv run ruff format --check .
+uv run ruff check .
 ```
 
 ## 🔬 mypy設定（型チェック）
+
+Ruffは型チェックを行わないため、静的型検査はmypyが担当する。
 
 ### 推奨設定 (pyproject.toml)
 
@@ -123,7 +87,7 @@ isort --check-only src/
 
 ```toml
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -133,32 +97,32 @@ disallow_untyped_defs = true
 
 ```bash
 # 型チェック実行
-mypy yourfile.py
+uv run mypy yourfile.py
 
 # ディレクトリ全体を型チェック
-mypy src/
+uv run mypy src/
 ```
 
 ## 💻 VSCode設定
 
 ### 推奨設定 (.vscode/settings.json)
 
-プロジェクトに `.vscode/settings.json` がない場合の推奨設定:
+プロジェクトに `.vscode/settings.json` がない場合の推奨設定（拡張機能 `charliermarsh.ruff` と `ms-python.mypy-type-checker` を使用）:
 
 ```json
 {
   "[python]": {
-    "editor.defaultFormatter": "ms-python.black-formatter",
+    "editor.defaultFormatter": "charliermarsh.ruff",
     "editor.formatOnSave": true,
     "editor.codeActionsOnSave": {
-      "source.organizeImports": true
+      "source.fixAll.ruff": "explicit",
+      "source.organizeImports.ruff": "explicit"
     }
-  },
-  "python.linting.enabled": true,
-  "python.linting.flake8Enabled": true,
-  "python.linting.mypyEnabled": true
+  }
 }
 ```
+
+推奨拡張機能: `charliermarsh.ruff`（フォーマット・リント）、`ms-python.mypy-type-checker`（mypyによる型チェックのエディタ連携）
 
 ## 🪝 Pre-commit フック（Lefthook）
 
@@ -184,38 +148,33 @@ npx lefthook install
 pre-commit:
   parallel: true
   commands:
+    # Pythonのリント（import整理含む）
+    ruff-check:
+      glob: "*.py"
+      run: uv run ruff check --fix {staged_files}
+      stage_fixed: true
+
     # Pythonファイルのフォーマット
-    black:
+    ruff-format:
       glob: "*.py"
-      run: black {staged_files}
+      run: uv run ruff format {staged_files}
       stage_fixed: true
-
-    # Pythonのインポート整理
-    isort:
-      glob: "*.py"
-      run: isort {staged_files}
-      stage_fixed: true
-
-    # Pythonのリント
-    flake8:
-      glob: "*.py"
-      run: flake8 {staged_files}
 
     # 型チェック
     mypy:
       glob: "*.py"
-      run: mypy {staged_files}
+      run: uv run mypy {staged_files}
 
 pre-push:
   parallel: false
   commands:
     # 全体の型チェック
     mypy-all:
-      run: mypy src/
+      run: uv run mypy src/
 
     # テスト実行
     pytest:
-      run: pytest --cov --cov-report=term-missing
+      run: uv run pytest --cov --cov-report=term-missing
 ```
 
 ### より詳細な設定例
@@ -226,29 +185,23 @@ pre-push:
 pre-commit:
   parallel: true
   commands:
+    # Pythonのリント（import整理含む）
+    ruff-check:
+      glob: "*.py"
+      run: uv run ruff check --fix {staged_files}
+      stage_fixed: true
+      fail_text: "ruffエラーを修正してください"
+
     # Pythonファイルのフォーマット
-    black:
+    ruff-format:
       glob: "*.py"
-      run: black {staged_files}
+      run: uv run ruff format {staged_files}
       stage_fixed: true
-      fail_text: "Blackでフォーマットしてください"
-
-    # インポート整理
-    isort:
-      glob: "*.py"
-      run: isort {staged_files}
-      stage_fixed: true
-
-    # リント
-    flake8:
-      glob: "*.py"
-      run: flake8 {staged_files}
-      fail_text: "flake8エラーを修正してください"
 
     # 型チェック
     mypy:
       glob: "*.py"
-      run: mypy {staged_files}
+      run: uv run mypy {staged_files}
 
     # セキュリティチェック
     secrets:
@@ -264,11 +217,11 @@ pre-push:
   commands:
     # 全体の型チェック
     mypy-all:
-      run: mypy .
+      run: uv run mypy .
 
     # テスト実行
     pytest:
-      run: pytest --cov --cov-report=term-missing
+      run: uv run pytest --cov --cov-report=term-missing
 ```
 
 ## 📦 完全な pyproject.toml 例
@@ -276,25 +229,27 @@ pre-push:
 **プロジェクトに `pyproject.toml` がない場合の完全な設定例**:
 
 ```toml
-[tool.black]
+[tool.ruff]
 line-length = 88
-target-version = ['py311']
-exclude = '''
-/(
-    \.git
-  | \.venv
-  | venv
-  | dist
-  | build
-)/
-'''
+target-version = "py312"
+exclude = [
+    ".git",
+    ".venv",
+    "venv",
+    "dist",
+    "build",
+]
 
-[tool.isort]
-profile = "black"
-line_length = 88
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E203"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -302,9 +257,8 @@ disallow_untyped_defs = true
 
 ## 📚 参考リンク
 
-- [Black公式ドキュメント](https://black.readthedocs.io/)
-- [flake8公式ドキュメント](https://flake8.pycqa.org/)
-- [isort公式ドキュメント](https://pycqa.github.io/isort/)
+- [Ruff公式ドキュメント](https://docs.astral.sh/ruff/)
+- [uv公式ドキュメント](https://docs.astral.sh/uv/)
 - [mypy公式ドキュメント](https://mypy.readthedocs.io/)
 - [PEP 8 スタイルガイド](https://peps.python.org/pep-0008/)
 - [Lefthook](https://github.com/evilmartians/lefthook)
