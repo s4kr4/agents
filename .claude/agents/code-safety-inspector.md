@@ -1,7 +1,7 @@
 ---
 name: code-safety-inspector
 description: Code review specialist. This agent performs reviews immediately after coding work.
-model: sonnet
+model: opus
 color: green
 tools: Bash, Read, Glob
 ---

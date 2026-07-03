@@ -1,7 +1,7 @@
 ---
 name: web-api-tester
 description: Backend API test-first specialist. Writes failing tests (RED phase) for API routes, business logic, and data access layers before implementation.
-model: sonnet
+model: opus
 color: red
 tools: Read, Write, Edit, Bash, Grep, Glob
 skills:

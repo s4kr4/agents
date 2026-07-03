@@ -1,7 +1,7 @@
 ---
 name: web-ui-tester
 description: Frontend UI test-first specialist. Writes failing tests (RED phase) for React components, custom Hooks, and UI interactions before implementation.
-model: sonnet
+model: opus
 color: green
 tools: Read, Write, Edit, Bash, Grep, Glob
 skills:
