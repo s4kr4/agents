@@ -154,7 +154,13 @@ today=$(date +"%Y-%m-%d")
 while IFS= read -r skill; do
   [ -z "$skill" ] && continue
 
-  feedback_dir="${cwd}/.claude/skills/${skill}/feedback"
+  # プロジェクトスキル（{cwd}/.claude/skills/{skill}/SKILL.md）が存在する場合はプロジェクト側、
+  # それ以外（グローバルスキルのみ）はグローバル側に保存する
+  if [ -f "${cwd}/.claude/skills/${skill}/SKILL.md" ]; then
+    feedback_dir="${cwd}/.claude/skills/${skill}/feedback"
+  else
+    feedback_dir="${HOME}/.claude/skills/${skill}/feedback"
+  fi
 
   mkdir -p "$feedback_dir"
 
@@ -198,8 +204,8 @@ ${dissatisfaction_signals:-なし}
 ${post_skill_responses:-なし}
 MARKDOWN
 
-  # usage.jsonl への記録
-  tracker_dir="${cwd}/.claude/skills/_tracker"
+  # usage.jsonl への記録（常にグローバルに集約。cwd フィールドでプロジェクト別に絞り込む）
+  tracker_dir="${HOME}/.claude/skills/_tracker"
   mkdir -p "$tracker_dir"
   printf '{"timestamp":"%s","skill":"%s","cwd":"%s","session_id":"%s","has_signals":%s}\n' \
     "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$skill" "$cwd" "$session_id" "$has_signals" \

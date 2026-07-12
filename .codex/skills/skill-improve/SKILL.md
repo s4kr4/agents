@@ -22,7 +22,7 @@ description: スキルのフィードバックを分析してSKILL.mdを改善�
 
 **`$ARGUMENTS` が未指定の場合**: 自動スキャンモードで動作する。
 
-1. `{cwd}/.claude/skills/*/feedback/` を走査し、`applied/` を除く `.md` ファイルを持つスキルを列挙する。ただし以下は走査・改善対象から除外する:
+1. `{cwd}/.claude/skills/*/feedback/` と `~/.claude/skills/*/feedback/` の両方を走査し、`applied/` を除く `.md` ファイルを持つスキルを列挙する。両方に同名スキルの feedback が存在する場合は統合して1スキルとして扱う（FB件数は合算する）。ただし以下は走査・改善対象から除外する:
    - スキル名にコロン (`:`) を含むスキル（plugin skill: `codex:setup` など）
    - `~/.claude/skills/<name>/SKILL.md` および `{cwd}/.claude/skills/<name>/SKILL.md` のいずれも存在しないスキル（Claude Code 組み込み skill: `update-config`, `review`, `init` など）
    - Stop フックが既にこれらをフィルタするため feedback ファイル自体が作られないはずだが、念のためドキュメントとして明示する
@@ -58,13 +58,19 @@ description: スキルのフィードバックを分析してSKILL.mdを改善�
 1. `{cwd}/.claude/skills/{target}/SKILL.md`（プロジェクト固有スキルが存在する場合）
 2. `~/.claude/skills/{target}/SKILL.md`（グローバルスキル）
 
-**フィードバックと tracker の読み込み先**（作業中プロジェクトの蓄積データ）:
-- `{cwd}/.claude/skills/{target}/feedback/` 配下の全 `.md` ファイル（`applied/` サブディレクトリは除く）
+**フィードバックの読み込み先**:
+- プロジェクト側とグローバル側の両方の `feedback/` ディレクトリ（存在する方、両方あれば両方）を読み込む
+  - `{cwd}/.claude/skills/{target}/feedback/` 配下の全 `.md` ファイル（`applied/` サブディレクトリは除く）
+  - `~/.claude/skills/{target}/feedback/` 配下の全 `.md` ファイル（`applied/` サブディレクトリは除く）
 
 > **auto_generated ファイルの扱い**: `auto_generated: true` フィールドを持つファイルは Stop フックによる自動収集です。`has_signals: true` のファイルには不満シグナルやSkill呼び出し後のユーザー応答が含まれるため、分析対象とします。`has_signals: false` のファイルはメタデータのみなので分析対象から除外してください。
-- `{cwd}/.claude/skills/_tracker/usage.jsonl`（使用頻度・コンテキスト）
-- `{cwd}/.claude/skills/_tracker/insights.jsonl`（Insight ログ。`session_id` で `usage.jsonl` と照合して特定スキル使用時の Insight を特定できる）
 
+**tracker の読み込み先**（常にグローバルに集約されている）:
+- `~/.claude/skills/_tracker/usage.jsonl`（使用頻度・コンテキスト）
+- `~/.claude/skills/_tracker/insights.jsonl`（Insight ログ。`session_id` で `usage.jsonl` と照合して特定スキル使用時の Insight を特定できる）
+
+> 各エントリの `cwd` フィールドで、どの作業プロジェクトでの使用かを識別できる。特定プロジェクトに絞り込みたい場合はこのフィールドでフィルタする。
+>
 > ここでの `{cwd}` はスキル実行時の作業ディレクトリ（プロジェクトルート）を指す。
 
 フィードバックファイルが0件の場合は以下を伝えてスキップする（自動スキャンモードでは次のスキルへ進む）。
@@ -116,7 +122,7 @@ description: スキルのフィードバックを分析してSKILL.mdを改善�
 
 ### 7. フィードバックファイルの移動
 
-適用に使用したフィードバックファイルを `feedback/applied/` ディレクトリに移動する。
+適用に使用したフィードバックファイルを、それぞれが存在していた `feedback/` ディレクトリ配下の `applied/` に移動する（プロジェクト側のファイルは `{cwd}/.claude/skills/{target}/feedback/applied/` へ、グローバル側のファイルは `~/.claude/skills/{target}/feedback/applied/` へ、元の場所を跨いで移動しない）。
 
 - 移動先ディレクトリが存在しない場合は作成する
 - ファイル名は変更しない

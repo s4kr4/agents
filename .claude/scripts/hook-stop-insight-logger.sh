@@ -10,7 +10,7 @@ timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 session_id=$(printf '%s' "$input" | jq -r '.session_id // empty')
 cwd=$(printf '%s' "$input" | jq -r '.cwd // ""')
 
-tracker_dir="${cwd}/.claude/skills/_tracker"
+tracker_dir="${HOME}/.claude/skills/_tracker"
 mkdir -p "$tracker_dir"
 
 # デバッグログ
