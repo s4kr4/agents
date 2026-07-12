@@ -61,9 +61,12 @@ description: スキルに対するフィードバックを収集・保存する�
 
 収集した内容を以下のフォーマットでファイルに保存する。
 
-**保存先パス**: `{cwd}/.claude/skills/{target-skill}/feedback/YYYY-MM-DD-{連番}.md`
+**保存先パス**: スキル定義と同じ場所に保存する。
 
-> ここでの `{cwd}` はスキル実行時の作業ディレクトリ（プロジェクトルート）を指す。
+- `{cwd}/.claude/skills/{target-skill}/SKILL.md` が存在する場合（プロジェクトスキル）→ `{cwd}/.claude/skills/{target-skill}/feedback/YYYY-MM-DD-{連番}.md`
+- 存在しない場合（グローバルスキルのみ）→ `~/.claude/skills/{target-skill}/feedback/YYYY-MM-DD-{連番}.md`
+
+> ここでの `{cwd}` はスキル実行時の作業ディレクトリ（プロジェクトルート）を指す。グローバルスキルのフィードバックを作業中プロジェクト配下に書かないことで、プロジェクトを汚さないようにする。
 
 連番の決定方法:
 - `feedback/` ディレクトリ（`applied/` サブディレクトリを除く）に存在する同日付のファイル数に +1 した値を使う
