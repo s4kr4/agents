@@ -64,6 +64,8 @@ description: スキルのフィードバックを分析してSKILL.mdを改善�
   - `~/.claude/skills/{target}/feedback/` 配下の全 `.md` ファイル（`applied/` サブディレクトリは除く）
 
 > **auto_generated ファイルの扱い**: `auto_generated: true` フィールドを持つファイルは Stop フックによる自動収集です。`has_signals: true` のファイルには不満シグナルやSkill呼び出し後のユーザー応答が含まれるため、分析対象とします。`has_signals: false` のファイルはメタデータのみなので分析対象から除外してください。
+>
+> **`source: orchestrator` ファイルの扱い**: `source: orchestrator` フィールドを持つファイルは、オーケストレーターがワークフローイベント発生時（development-workflow.md 参照）にその場で記録したものです。常に `has_signals: true` を持つため実質件数にカウントします。イベント種別・根本原因が構造化されているため、分析時は優先的に扱ってください。
 
 **tracker の読み込み先**（常にグローバルに集約されている）:
 - `~/.claude/skills/_tracker/usage.jsonl`（使用頻度・コンテキスト）
