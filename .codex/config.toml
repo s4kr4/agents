@@ -1,0 +1,28 @@
+# Claude Code のグローバル設定との対応:
+# - acceptEdits → workspace-write + on-request
+# - language/outputStyle → AGENTS.md の日本語・説明的な応答方針
+# - CLAUDE.md → プロジェクト指示のフォールバック名
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+project_doc_fallback_filenames = ["CLAUDE.md"]
+project_doc_max_bytes = 65536
+model_verbosity = "medium"
+vim_mode_default = true
+
+[sandbox_workspace_write]
+network_access = false
+exclude_tmpdir_env_var = false
+exclude_slash_tmp = false
+
+[agents]
+max_threads = 4
+max_depth = 1
+
+[features]
+hooks = true
+multi_agent = true
+
+[tui]
+notifications = ["agent-turn-complete", "approval-requested"]
+notification_condition = "always"
+
