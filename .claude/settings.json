@@ -41,11 +41,11 @@
       "Read(**/.env.!(example))",
       "Read(**/id_rsa)",
       "Read(**/id_ed25519)",
-      "Write(.env)",
-      "Write(.env.!(example))",
-      "Write(**/.env)",
-      "Write(**/.env.!(example))",
-      "Write(**/secrets/**)"
+      "Edit(.env)",
+      "Edit(.env.!(example))",
+      "Edit(**/.env)",
+      "Edit(**/.env.!(example))",
+      "Edit(**/secrets/**)"
     ],
     "ask": [],
     "defaultMode": "acceptEdits"
