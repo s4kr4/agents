@@ -1,78 +1,8 @@
 {
-  "agentPushNotifEnabled": true,
-  "editorMode": "vim",
-  "enabledPlugins": {
-    "codex@openai-codex": true
-  },
   "env": {
     "CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS": "1"
   },
-  "extraKnownMarketplaces": {
-    "openai-codex": {
-      "source": {
-        "repo": "openai/codex-plugin-cc",
-        "source": "github"
-      }
-    }
-  },
-  "hooks": {
-    "PostToolUse": [
-      {
-        "hooks": [
-          {
-            "command": "~/.agents/.claude/scripts/hook-post-secret-scan.sh",
-            "statusMessage": "シークレットスキャン中...",
-            "type": "command"
-          }
-        ],
-        "matcher": "Write|Edit"
-      }
-    ],
-    "PreToolUse": [
-      {
-        "hooks": [
-          {
-            "command": "~/.agents/.claude/scripts/hook-pre-boundary.sh",
-            "statusMessage": "プロジェクト境界チェック中...",
-            "type": "command"
-          }
-        ],
-        "matcher": "Write|Edit"
-      }
-    ],
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "command": "bash '/home/s4kr4/.claude/hooks/herdr-agent-state.sh' session",
-            "timeout": 10,
-            "type": "command"
-          }
-        ],
-        "matcher": "*"
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "command": "~/.agents/.claude/scripts/hook-stop-insight-logger.sh",
-            "statusMessage": "Insightログ記録中...",
-            "type": "command"
-          },
-          {
-            "command": "~/.agents/.claude/scripts/hook-stop-skill-feedback.sh",
-            "statusMessage": "スキルフィードバック自動記録中...",
-            "type": "command"
-          }
-        ]
-      }
-    ]
-  },
   "includeCoAuthoredBy": false,
-  "language": "japanese",
-  "model": "claude-fable-5[1m]",
-  "outputStyle": "Explanatory",
   "permissions": {
     "allow": [
       "Bash(cd *)",
@@ -91,8 +21,6 @@
       "Bash(git *)",
       "Bash(playwright-cli *)"
     ],
-    "ask": [],
-    "defaultMode": "acceptEdits",
     "deny": [
       "Bash(sudo *)",
       "Bash(curl *)",
@@ -118,15 +46,86 @@
       "Write(**/.env)",
       "Write(**/.env.!(example))",
       "Write(**/secrets/**)"
+    ],
+    "ask": [],
+    "defaultMode": "acceptEdits"
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.agents/.claude/scripts/hook-post-secret-scan.sh",
+            "statusMessage": "シークレットスキャン中..."
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.agents/.claude/scripts/hook-pre-boundary.sh",
+            "statusMessage": "プロジェクト境界チェック中..."
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash '/home/s4kr4/.claude/hooks/herdr-agent-state.sh' session",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.agents/.claude/scripts/hook-stop-insight-logger.sh",
+            "statusMessage": "Insightログ記録中..."
+          },
+          {
+            "type": "command",
+            "command": "~/.agents/.claude/scripts/hook-stop-skill-feedback.sh",
+            "statusMessage": "スキルフィードバック自動記録中..."
+          }
+        ]
+      }
     ]
   },
-  "remoteControlAtStartup": true,
+  "statusLine": {
+    "type": "command",
+    "command": "~/.agents/scripts/claude-statusline"
+  },
+  "enabledPlugins": {
+    "codex@openai-codex": true
+  },
+  "extraKnownMarketplaces": {
+    "openai-codex": {
+      "source": {
+        "source": "github",
+        "repo": "openai/codex-plugin-cc"
+      }
+    }
+  },
+  "outputStyle": "Explanatory",
+  "language": "japanese",
   "sandbox": {
     "enabled": false
   },
-  "skipAutoPermissionPrompt": true,
-  "statusLine": {
-    "command": "~/.agents/scripts/claude-statusline",
-    "type": "command"
-  }
+  "editorMode": "vim",
+  "remoteControlAtStartup": true,
+  "agentPushNotifEnabled": true,
+  "skipAutoPermissionPrompt": true
 }
