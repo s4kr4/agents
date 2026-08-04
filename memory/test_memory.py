@@ -1,167 +1,465 @@
 #!/usr/bin/env python3
-"""Tests for queue-based memory system (file-based fallback when DB is not writable)."""
+"""Tests for the memory.py CLI (file-based Vault + local pipeline stores)."""
 from __future__ import annotations
 
+import argparse
+import io
 import json
-import sqlite3
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-_MEMORY_DIR = Path(__file__).resolve().parent
+from local_store import LocalPipelineStore
+from markdown_store import MarkdownMemoryStore
 
-# Import memory.py directly to avoid confusion with the memory/ namespace package
-import importlib.util as _ilu
-import types as _types
-
-_spec = _ilu.spec_from_file_location("memory_module", _MEMORY_DIR / "memory.py")
-mem = _ilu.module_from_spec(_spec)  # type: ignore[arg-type]
-# Register under both names so that @dataclass works correctly
-sys.modules["memory_module"] = mem
-_spec.loader.exec_module(mem)  # type: ignore[union-attr]
+import memory as mem
 
 
-def make_temp_db() -> Path:
-    """Create a temporary SQLite database with the schema applied."""
-    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
-    tmp.close()
-    db_path = Path(tmp.name)
-    conn = mem.connect_readwrite(db_path)
-    conn.close()
-    return db_path
+class CliTestBase(unittest.TestCase):
+    """Base class wiring a fresh vault/local-dir pair per test."""
+
+    def setUp(self):
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.vault_dir = Path(self._tmpdir.name) / "vault"
+        self.local_dir = Path(self._tmpdir.name) / "local"
+        self.markdown_store = MarkdownMemoryStore(self.vault_dir)
+        self.local_store = LocalPipelineStore(self.local_dir)
+
+    def tearDown(self):
+        self._tmpdir.cleanup()
+
+    def make_args(self, **fields) -> argparse.Namespace:
+        defaults = {
+            "db": None,
+            "markdown_store": self.markdown_store,
+            "local_store": self.local_store,
+        }
+        defaults.update(fields)
+        return argparse.Namespace(**defaults)
+
+    def run_cmd(self, func, **fields) -> dict:
+        args = self.make_args(**fields)
+        captured = io.StringIO()
+        with patch("sys.stdout", captured):
+            func(args)
+        return json.loads(captured.getvalue())
 
 
-class TestConnectReadwrite(unittest.TestCase):
-    """connect_readwrite() creates a writable connection with schema applied."""
+class TestCmdInitDb(CliTestBase):
+    def test_returns_ok_and_directory_paths(self):
+        result = self.run_cmd(mem.cmd_init_db)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["vault"], str(self.vault_dir))
+        self.assertEqual(result["local_dir"], str(self.local_dir))
 
-    def test_connect_readwrite_creates_db_and_returns_connection(self):
-        # Arrange
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = Path(tmpdir) / "test.db"
-
-            # Act
-            conn = mem.connect_readwrite(db_path)
-
-            # Assert
-            self.assertIsInstance(conn, sqlite3.Connection)
-            conn.close()
-            self.assertTrue(db_path.exists())
-
-    def test_connect_readwrite_applies_schema(self):
-        # Arrange
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = Path(tmpdir) / "test.db"
-
-            # Act
-            conn = mem.connect_readwrite(db_path)
-
-            # Assert: sessions table must exist
-            row = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'"
-            ).fetchone()
-            self.assertIsNotNone(row)
-            conn.close()
-
-    def test_connect_readwrite_creates_parent_dirs(self):
-        # Arrange
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = Path(tmpdir) / "nested" / "dir" / "test.db"
-
-            # Act
-            conn = mem.connect_readwrite(db_path)
-
-            # Assert
-            self.assertTrue(db_path.exists())
-            conn.close()
-
-    def test_connect_readwrite_sets_temp_store_directory_to_tmp(self):
-        # /var/tmp/ がブロックされる sandbox 環境でも動作するよう /tmp/ を使う
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = Path(tmpdir) / "test.db"
-
-            # Act
-            conn = mem.connect_readwrite(db_path)
-
-            # Assert: temp_store_directory が /tmp に設定されている
-            row = conn.execute("PRAGMA temp_store_directory").fetchone()
-            self.assertEqual(row[0], "/tmp")
-            conn.close()
+    def test_creates_vault_and_local_directories(self):
+        self.run_cmd(mem.cmd_init_db)
+        self.assertTrue((self.vault_dir / "memory").is_dir())
+        self.assertTrue((self.local_dir / "sessions").is_dir())
 
 
-class TestConnectReadonly(unittest.TestCase):
-    """connect_readonly() opens an existing DB without schema changes."""
+class TestCmdStartSession(CliTestBase):
+    def test_creates_session_file_and_returns_ok(self):
+        result = self.run_cmd(
+            mem.cmd_start_session,
+            session_id="sess_1",
+            client="claude-code",
+            user_id="default",
+            project_id="proj",
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["session"]["id"], "sess_1")
+        self.assertIsNotNone(self.local_store.get_session("sess_1"))
 
-    def test_connect_readonly_opens_existing_db(self):
-        # Arrange
-        db_path = make_temp_db()
+    def test_generates_session_id_when_not_given(self):
+        result = self.run_cmd(
+            mem.cmd_start_session, session_id=None, client="c", user_id="u", project_id=None
+        )
+        self.assertTrue(result["session"]["id"].startswith("sess_"))
 
-        try:
-            # Act
-            conn = mem.connect_readonly(db_path)
 
-            # Assert
-            self.assertIsInstance(conn, sqlite3.Connection)
-            conn.close()
-        finally:
-            db_path.unlink(missing_ok=True)
+class TestCmdAppendEvent(CliTestBase):
+    def test_appends_event_to_local_store(self):
+        result = self.run_cmd(
+            mem.cmd_append_event,
+            event_id=None,
+            session_id="sess_1",
+            client="claude-code",
+            user_id="default",
+            project_id="proj",
+            role="user",
+            kind="message",
+            content="hello",
+            importance=0.5,
+        )
+        self.assertTrue(result["ok"])
+        events = self.local_store.iter_events("sess_1")
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["content"], "hello")
 
-    def test_connect_readonly_raises_when_db_missing(self):
-        # Arrange
-        db_path = Path("/tmp/nonexistent_test_memory_12345.db")
+    def test_ensures_session_exists(self):
+        self.run_cmd(
+            mem.cmd_append_event,
+            event_id=None,
+            session_id="sess_new",
+            client="claude-code",
+            user_id="default",
+            project_id="proj",
+            role="user",
+            kind="message",
+            content="hi",
+            importance=0.5,
+        )
+        self.assertIsNotNone(self.local_store.get_session("sess_new"))
 
-        # Act / Assert
-        with self.assertRaises(FileNotFoundError):
-            mem.connect_readonly(db_path)
 
-    def test_connect_readonly_cannot_write(self):
-        # Arrange
-        db_path = make_temp_db()
+class TestCmdEndSession(CliTestBase):
+    def test_raises_when_session_missing(self):
+        args = self.make_args(
+            session_id="sess_missing",
+            summary=None,
+            append_summary_event=False,
+            extract=False,
+            consolidate=False,
+        )
+        with self.assertRaises(SystemExit):
+            mem.cmd_end_session(args)
 
-        try:
-            conn = mem.connect_readonly(db_path)
+    def test_extract_and_consolidate_creates_active_memory(self):
+        self.local_store.ensure_session("sess_1", client="claude-code", user_id="u1", project_id="p1")
+        self.local_store.append_event(
+            "sess_1", role="user", kind="message", content="I like Neovim", importance=0.5
+        )
 
-            # Act / Assert: writing must fail in read-only mode
-            with self.assertRaises(sqlite3.OperationalError):
-                conn.execute(
-                    "INSERT INTO sessions(id, client, user_id, started_at) VALUES('x','c','u','t')"
-                )
-            conn.close()
-        finally:
-            db_path.unlink(missing_ok=True)
+        result = self.run_cmd(
+            mem.cmd_end_session,
+            session_id="sess_1",
+            summary=None,
+            append_summary_event=False,
+            extract=True,
+            consolidate=True,
+        )
 
-    def test_connect_readonly_sets_temp_store_directory_to_tmp(self):
-        # /var/tmp/ がブロックされる sandbox 環境でも動作するよう /tmp/ を使う
-        db_path = make_temp_db()
+        self.assertTrue(result["ok"])
+        self.assertGreater(result["extracted_count"], 0)
+        self.assertGreater(result["consolidated_count"], 0)
 
-        try:
-            # Act
-            conn = mem.connect_readonly(db_path)
+        active = self.markdown_store.search(type="profile")
+        titles = [m["title"] for m in active]
+        self.assertIn("Preferred Editor", titles)
 
-            # Assert: temp_store_directory が /tmp に設定されている
-            row = conn.execute("PRAGMA temp_store_directory").fetchone()
-            self.assertEqual(row[0], "/tmp")
-            conn.close()
-        finally:
-            db_path.unlink(missing_ok=True)
+    def test_append_summary_event_adds_summary_event(self):
+        self.local_store.ensure_session("sess_1", client="claude-code", user_id="u1", project_id="p1")
 
-    def test_connect_backward_compat(self):
-        """connect() is an alias for connect_readwrite()."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = Path(tmpdir) / "test.db"
-            conn = mem.connect(db_path)
-            self.assertIsInstance(conn, sqlite3.Connection)
-            conn.close()
+        self.run_cmd(
+            mem.cmd_end_session,
+            session_id="sess_1",
+            summary="custom summary",
+            append_summary_event=True,
+            extract=False,
+            consolidate=False,
+        )
+
+        events = self.local_store.iter_events("sess_1")
+        summary_events = [e for e in events if e["kind"] == "summary"]
+        self.assertEqual(len(summary_events), 1)
+        self.assertEqual(summary_events[0]["content"], "custom summary")
+
+    def test_consolidate_only_processes_current_session_observations(self):
+        self.local_store.ensure_session("sess_old", client="c", user_id="u1", project_id="p1")
+        self.local_store.append_observation(
+            session_id="sess_old",
+            source_event_id="evt_old",
+            entity_type="user",
+            entity_id="u1",
+            attribute="preferred_language_runtime",
+            value={"type": "profile", "value": "TypeScript"},
+            confidence=0.75,
+            scope="global",
+            extractor_version="test",
+        )
+
+        self.local_store.ensure_session("sess_new", client="c", user_id="u1", project_id="p1")
+        self.local_store.append_observation(
+            session_id="sess_new",
+            source_event_id="evt_new",
+            entity_type="user",
+            entity_id="u1",
+            attribute="preferred_language_runtime",
+            value={"type": "profile", "value": "Python"},
+            confidence=0.75,
+            scope="global",
+            extractor_version="test",
+        )
+
+        self.run_cmd(
+            mem.cmd_end_session,
+            session_id="sess_new",
+            summary="s",
+            append_summary_event=False,
+            extract=False,
+            consolidate=True,
+        )
+
+        active = self.markdown_store.search(type="profile")
+        matching = [m for m in active if m["title"] == "Preferred Language Runtime"]
+        self.assertEqual(len(matching), 1)
+        self.assertEqual(matching[0]["summary"], "よく使う言語: Python")
+
+    def test_consolidate_skips_poisoned_project_scope_observation_and_processes_the_rest(self):
+        self.local_store.ensure_session("sess_1", client="c", user_id="u1", project_id="p1")
+        self.local_store.append_observation(
+            session_id="sess_1",
+            source_event_id="evt_poison",
+            entity_type="user",
+            entity_id="u1",
+            attribute="api_routing",
+            value={"type": "reference", "value": "REST"},
+            confidence=0.8,
+            scope="project",
+            project_id=None,
+            extractor_version="test",
+        )
+        self.local_store.append_observation(
+            session_id="sess_1",
+            source_event_id="evt_ok",
+            entity_type="user",
+            entity_id="u1",
+            attribute="preferred_editor",
+            value={"type": "profile", "value": "Neovim"},
+            confidence=0.7,
+            scope="global",
+            extractor_version="test",
+        )
+
+        result = self.run_cmd(
+            mem.cmd_end_session,
+            session_id="sess_1",
+            summary="s",
+            append_summary_event=False,
+            extract=False,
+            consolidate=True,
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["consolidated_count"], 1)
+        active = self.markdown_store.search(type="profile")
+        titles = [m["title"] for m in active]
+        self.assertIn("Preferred Editor", titles)
+
+
+class TestCmdExtract(CliTestBase):
+    def test_inserts_observations_from_events(self):
+        self.local_store.ensure_session("sess_1", client="c", user_id="u1", project_id=None)
+        self.local_store.append_event(
+            "sess_1", role="user", kind="message", content="I like Python", importance=0.5
+        )
+
+        result = self.run_cmd(mem.cmd_extract, session_id="sess_1")
+
+        self.assertTrue(result["ok"])
+        self.assertGreater(result["count"], 0)
+        self.assertEqual(len(self.local_store.iter_observations("sess_1")), result["count"])
+
+
+class TestBuildCandidatesNoRecentSummary(unittest.TestCase):
+    """build_candidates() should not generate recent_summary observations from summary events."""
+
+    def _make_event(self, **overrides) -> dict:
+        defaults = {
+            "id": "evt_test",
+            "role": "assistant",
+            "kind": "summary",
+            "content": "This is a session summary text.",
+            "user_id": "user_test",
+            "project_id": "proj_test",
+            "importance": 0.9,
+            "client": "claude-code",
+        }
+        defaults.update(overrides)
+        return defaults
+
+    def test_summary_event_does_not_generate_recent_summary_observation(self):
+        event = self._make_event(kind="summary", content="Some session summary.")
+        candidates = mem.build_candidates(event)
+        attributes = [c.attribute for c in candidates]
+        self.assertNotIn("recent_summary", attributes)
+
+    def test_summary_event_generates_no_candidates_at_all(self):
+        event = self._make_event(kind="summary", role="assistant", content="Summary text.")
+        candidates = mem.build_candidates(event)
+        self.assertEqual(len(candidates), 0)
+
+    def test_command_event_still_generates_recent_command_observation(self):
+        event = self._make_event(
+            kind="command", role="assistant", content='{"command": "ls -la"}', importance=0.7
+        )
+        candidates = mem.build_candidates(event)
+        attributes = [c.attribute for c in candidates]
+        self.assertIn("recent_command", attributes)
+        self.assertNotIn("recent_summary", attributes)
+
+
+class TestCmdConsolidate(CliTestBase):
+    def test_builds_memories_from_all_observations_matching_filters(self):
+        self.local_store.ensure_session("sess_1", client="c", user_id="u1", project_id=None)
+        self.local_store.append_observation(
+            session_id="sess_1",
+            source_event_id="evt_1",
+            entity_type="user",
+            entity_id="u1",
+            attribute="preferred_editor",
+            value={"type": "profile", "value": "Neovim"},
+            confidence=0.7,
+            scope="global",
+            extractor_version="test",
+        )
+
+        result = self.run_cmd(mem.cmd_consolidate, entity_id="u1", attribute=None)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["count"], 1)
+
+    def test_skips_poisoned_project_scope_observation_and_consolidates_the_rest(self):
+        """A store already holding a scope="project"/project_id=None observation
+        (e.g. left over from before the write-memory fail-fast guard existed)
+        must not abort consolidation of the other, valid observations.
+        """
+        self.local_store.ensure_session("sess_1", client="c", user_id="u1", project_id=None)
+        self.local_store.append_observation(
+            session_id="sess_1",
+            source_event_id="evt_poison",
+            entity_type="user",
+            entity_id="u1",
+            attribute="api_routing",
+            value={"type": "reference", "value": "REST"},
+            confidence=0.8,
+            scope="project",
+            project_id=None,
+            extractor_version="test",
+        )
+        self.local_store.append_observation(
+            session_id="sess_1",
+            source_event_id="evt_ok",
+            entity_type="user",
+            entity_id="u1",
+            attribute="preferred_editor",
+            value={"type": "profile", "value": "Neovim"},
+            confidence=0.7,
+            scope="global",
+            extractor_version="test",
+        )
+
+        captured_stderr = io.StringIO()
+        with patch("sys.stderr", captured_stderr):
+            result = self.run_cmd(mem.cmd_consolidate, entity_id="u1", attribute=None)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["count"], 1)
+        active = self.markdown_store.search(type="profile")
+        titles = [m["title"] for m in active]
+        self.assertIn("Preferred Editor", titles)
+        self.assertIn("api_routing", captured_stderr.getvalue())
+
+
+class TestCmdSearch(CliTestBase):
+    def _seed_memory(self, **overrides):
+        defaults = {
+            "type": "profile",
+            "entity_type": "user",
+            "entity_id": "default",
+            "key": "preferred_editor",
+            "scope": "global",
+            "project_id": None,
+            "summary": "好みのエディタ: Neovim",
+        }
+        defaults.update(overrides)
+        self.markdown_store.upsert_from_observation(**defaults)
+
+    def test_search_returns_matching_memory(self):
+        self._seed_memory()
+
+        result = self.run_cmd(mem.cmd_search, session_id=None, query="editor", entity_id=None,
+                               memory_type=None, scope=None, project_id=None, limit=10)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["count"], 1)
+        self.assertEqual(result["memories"][0]["title"], "Preferred Editor")
+
+    def test_search_logs_retrieval_when_session_id_given(self):
+        self._seed_memory()
+
+        self.run_cmd(mem.cmd_search, session_id="sess_1", query="editor", entity_id=None,
+                      memory_type=None, scope=None, project_id=None, limit=10)
+
+        path = self.local_dir / "logs" / "retrieval.jsonl"
+        self.assertTrue(path.exists())
+
+    def test_search_respects_limit(self):
+        self._seed_memory(key="a", summary="a")
+        self._seed_memory(key="b", summary="b")
+
+        result = self.run_cmd(mem.cmd_search, session_id=None, query=None, entity_id=None,
+                               memory_type=None, scope=None, project_id=None, limit=1)
+        self.assertEqual(result["count"], 1)
+
+
+class TestCmdGetContext(CliTestBase):
+    def test_buckets_memories_by_type(self):
+        self.markdown_store.upsert_from_observation(
+            type="feedback",
+            entity_type="user",
+            entity_id="default",
+            key="response_language",
+            scope="global",
+            project_id=None,
+            summary="応答は日本語で行う",
+        )
+        self.markdown_store.upsert_from_observation(
+            type="profile",
+            entity_type="user",
+            entity_id="default",
+            key="preferred_editor",
+            scope="global",
+            project_id=None,
+            summary="好みのエディタ: Neovim",
+        )
+
+        result = self.run_cmd(mem.cmd_get_context, user_id="default", project_id="my-project")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(result["context"]["feedback"]), 1)
+        self.assertEqual(len(result["context"]["profile"]), 1)
+        self.assertEqual(result["context"]["reference"], [])
+
+
+class TestCmdForget(CliTestBase):
+    def test_archives_memory_and_logs_reason(self):
+        created = self.markdown_store.upsert_from_observation(
+            type="profile",
+            entity_type="user",
+            entity_id="default",
+            key="preferred_editor",
+            scope="global",
+            project_id=None,
+            summary="好みのエディタ: Neovim",
+        )
+
+        result = self.run_cmd(mem.cmd_forget, memory_id=created["id"], reason="user changed setup")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["updated"], 1)
+        self.assertIsNone(self.markdown_store.read(created["id"]))
+
+        deletions_path = self.local_dir / "logs" / "deletions.jsonl"
+        self.assertTrue(deletions_path.exists())
 
 
 class TestQueueSession(unittest.TestCase):
-    """cmd_queue_session() saves a payload to a JSONL file without touching SQLite."""
+    """cmd_queue_session() saves a payload to a JSONL file without touching a store."""
 
     def _run_queue_session(self, queue_dir: Path, **kwargs) -> dict:
-        import argparse
-        import io
-
         defaults = {
             "session_id": "sess_test123456",
             "client": "claude-code",
@@ -181,24 +479,16 @@ class TestQueueSession(unittest.TestCase):
             return json.loads(captured.getvalue())
 
     def test_queue_session_creates_jsonl_file(self):
-        # Arrange
         with tempfile.TemporaryDirectory() as tmpdir:
             queue_dir = Path(tmpdir) / "queue"
-
-            # Act
             result = self._run_queue_session(queue_dir)
-
-            # Assert
             self.assertTrue(result["ok"])
             files = list(queue_dir.glob("*.jsonl"))
             self.assertEqual(len(files), 1)
 
     def test_queue_session_file_contains_valid_payload(self):
-        # Arrange
         with tempfile.TemporaryDirectory() as tmpdir:
             queue_dir = Path(tmpdir) / "queue"
-
-            # Act
             self._run_queue_session(
                 queue_dir,
                 session_id="sess_abcdef123456",
@@ -206,8 +496,6 @@ class TestQueueSession(unittest.TestCase):
                 assistant_content="my answer",
                 summary="short summary",
             )
-
-            # Assert
             files = list(queue_dir.glob("*.jsonl"))
             data = json.loads(files[0].read_text(encoding="utf-8"))
             self.assertEqual(data["session_id"], "sess_abcdef123456")
@@ -216,31 +504,19 @@ class TestQueueSession(unittest.TestCase):
             self.assertEqual(data["summary"], "short summary")
             self.assertIn("queued_at", data)
 
-    def test_queue_session_does_not_touch_sqlite(self):
-        """cmd_queue_session must not open any SQLite connection."""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            queue_dir = Path(tmpdir) / "queue"
-
-            with patch("sqlite3.connect") as mock_connect:
-                self._run_queue_session(queue_dir)
-                mock_connect.assert_not_called()
-
     def test_queue_session_filename_contains_session_id_prefix(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             queue_dir = Path(tmpdir) / "queue"
             self._run_queue_session(queue_dir, session_id="sess_uniqueid9999")
-
             files = list(queue_dir.glob("*.jsonl"))
             self.assertEqual(len(files), 1)
-            # filename should contain first 16 chars of session_id
             self.assertIn("sess_uniqueid999", files[0].name)
 
 
-class TestFlushQueue(unittest.TestCase):
-    """cmd_flush_queue() reads JSONL files and writes to SQLite, then deletes them."""
+class TestFlushQueue(CliTestBase):
+    """cmd_flush_queue() reads JSONL files and writes to the stores, then deletes them."""
 
     def _queue_one(self, queue_dir: Path, session_id: str = "sess_flush00000000") -> Path:
-        """Write a queue JSONL file directly."""
         queue_dir.mkdir(parents=True, exist_ok=True)
         fname = queue_dir / f"20240101T000000000000_{session_id[:16]}.jsonl"
         payload = {
@@ -256,948 +532,468 @@ class TestFlushQueue(unittest.TestCase):
         fname.write_text(json.dumps(payload) + "\n", encoding="utf-8")
         return fname
 
-    def _run_flush(self, db_path: Path, queue_dir: Path) -> dict:
-        import argparse
-        import io
-
-        args = argparse.Namespace(db=db_path)
+    def _run_flush(self, queue_dir: Path) -> dict:
         with patch.object(mem, "QUEUE_DIR", queue_dir):
-            captured = io.StringIO()
-            with patch("sys.stdout", captured):
-                mem.cmd_flush_queue(args)
-            return json.loads(captured.getvalue())
+            return self.run_cmd(mem.cmd_flush_queue)
 
     def test_flush_queue_empty_queue(self):
-        # Arrange
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = make_temp_db()
             queue_dir = Path(tmpdir) / "queue"
-
-            try:
-                # Act
-                result = self._run_flush(db_path, queue_dir)
-
-                # Assert
-                self.assertTrue(result["ok"])
-                self.assertEqual(result["flushed"], 0)
-            finally:
-                db_path.unlink(missing_ok=True)
+            result = self._run_flush(queue_dir)
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["flushed"], 0)
 
     def test_flush_queue_processes_one_file(self):
-        # Arrange
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = make_temp_db()
             queue_dir = Path(tmpdir) / "queue"
             self._queue_one(queue_dir, "sess_flush11111111")
-
-            try:
-                # Act
-                result = self._run_flush(db_path, queue_dir)
-
-                # Assert
-                self.assertTrue(result["ok"])
-                self.assertEqual(result["flushed"], 1)
-            finally:
-                db_path.unlink(missing_ok=True)
+            result = self._run_flush(queue_dir)
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["flushed"], 1)
 
     def test_flush_queue_deletes_processed_files(self):
-        # Arrange
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = make_temp_db()
             queue_dir = Path(tmpdir) / "queue"
             self._queue_one(queue_dir, "sess_flush22222222")
+            self._run_flush(queue_dir)
+            files = list(queue_dir.glob("*.jsonl"))
+            self.assertEqual(len(files), 0)
 
-            try:
-                # Act
-                self._run_flush(db_path, queue_dir)
-
-                # Assert: file should be deleted after flush
-                files = list(queue_dir.glob("*.jsonl"))
-                self.assertEqual(len(files), 0)
-            finally:
-                db_path.unlink(missing_ok=True)
-
-    def test_flush_queue_writes_session_to_db(self):
-        # Arrange
+    def test_flush_queue_writes_session_to_local_store(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = make_temp_db()
             queue_dir = Path(tmpdir) / "queue"
             session_id = "sess_flush33333333"
             self._queue_one(queue_dir, session_id)
-
-            try:
-                # Act
-                self._run_flush(db_path, queue_dir)
-
-                # Assert: session exists in DB
-                conn = mem.connect_readonly(db_path)
-                row = conn.execute(
-                    "SELECT id FROM sessions WHERE id = ?", (session_id,)
-                ).fetchone()
-                conn.close()
-                self.assertIsNotNone(row)
-            finally:
-                db_path.unlink(missing_ok=True)
+            self._run_flush(queue_dir)
+            self.assertIsNotNone(self.local_store.get_session(session_id))
 
     def test_flush_queue_processes_multiple_files(self):
-        # Arrange
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = make_temp_db()
             queue_dir = Path(tmpdir) / "queue"
             self._queue_one(queue_dir, "sess_flushAAAAAAAA")
             self._queue_one(queue_dir, "sess_flushBBBBBBBB")
+            result = self._run_flush(queue_dir)
+            self.assertEqual(result["flushed"], 2)
+            files = list(queue_dir.glob("*.jsonl"))
+            self.assertEqual(len(files), 0)
 
-            try:
-                # Act
-                result = self._run_flush(db_path, queue_dir)
+    def test_flush_queue_skips_poisoned_observation_and_still_completes(self):
+        """A poisoned observation (scope="project", project_id=None) already
+        sitting in the local store for the queued session must not abort the
+        drain of the rest of that session's observations.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            queue_dir = Path(tmpdir) / "queue"
+            session_id = "sess_flushCCCCCCCC"
+            self.local_store.ensure_session(
+                session_id, client="claude-code", user_id="default", project_id=None
+            )
+            self.local_store.append_observation(
+                session_id=session_id,
+                source_event_id="evt_poison",
+                entity_type="user",
+                entity_id="default",
+                attribute="api_routing",
+                value={"type": "reference", "value": "REST"},
+                confidence=0.8,
+                scope="project",
+                project_id=None,
+                extractor_version="test",
+            )
 
-                # Assert
-                self.assertEqual(result["flushed"], 2)
-                files = list(queue_dir.glob("*.jsonl"))
-                self.assertEqual(len(files), 0)
-            finally:
-                db_path.unlink(missing_ok=True)
+            queue_dir.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "session_id": session_id,
+                "client": "claude-code",
+                "user_id": "default",
+                "project_id": None,
+                "user_content": "I like Neovim",
+                "assistant_content": "",
+                "summary": "test summary",
+                "queued_at": mem.utc_now(),
+            }
+            (queue_dir / f"20240101T000000000000_{session_id[:16]}.jsonl").write_text(
+                json.dumps(payload) + "\n", encoding="utf-8"
+            )
+
+            result = self._run_flush(queue_dir)
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(result["flushed"], 1)
+            active = self.markdown_store.search(type="profile")
+            titles = [m["title"] for m in active]
+            self.assertIn("Preferred Editor", titles)
 
 
 class TestFlushQueueIfPossible(unittest.TestCase):
     """flush_queue_if_possible() silently ignores all errors."""
 
-    def test_returns_zero_when_db_missing(self):
-        db_path = Path("/tmp/nonexistent_memory_test_999.db")
-        result = mem.flush_queue_if_possible(db_path)
-        self.assertEqual(result, 0)
-
     def test_returns_zero_when_queue_empty(self):
         with tempfile.TemporaryDirectory() as tmpdir:
-            db_path = make_temp_db()
+            vault_dir = Path(tmpdir) / "vault"
+            local_dir = Path(tmpdir) / "local"
             queue_dir = Path(tmpdir) / "queue"
+            with patch.object(mem, "QUEUE_DIR", queue_dir):
+                result = mem.flush_queue_if_possible(vault_dir, local_dir)
+            self.assertEqual(result, 0)
 
-            try:
-                with patch.object(mem, "QUEUE_DIR", queue_dir):
-                    result = mem.flush_queue_if_possible(db_path)
-                self.assertIsInstance(result, int)
-            finally:
-                db_path.unlink(missing_ok=True)
+    def test_flushes_queued_files_into_stores(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            vault_dir = Path(tmpdir) / "vault"
+            local_dir = Path(tmpdir) / "local"
+            queue_dir = Path(tmpdir) / "queue"
+            queue_dir.mkdir(parents=True)
+            payload = {
+                "session_id": "sess_fqip",
+                "client": "claude-code",
+                "user_id": "default",
+                "project_id": None,
+                "user_content": "hi",
+                "assistant_content": "hello",
+                "summary": "s",
+                "queued_at": mem.utc_now(),
+            }
+            (queue_dir / "one.jsonl").write_text(json.dumps(payload) + "\n", encoding="utf-8")
+
+            with patch.object(mem, "QUEUE_DIR", queue_dir):
+                result = mem.flush_queue_if_possible(vault_dir, local_dir)
+
+            self.assertEqual(result, 1)
 
     def test_never_raises(self):
-        """flush_queue_if_possible must never propagate exceptions."""
-        with patch.object(mem, "connect_readwrite", side_effect=RuntimeError("boom")):
-            # Should not raise
-            result = mem.flush_queue_if_possible(Path("/some/path.db"))
+        with patch("memory.LocalPipelineStore", side_effect=RuntimeError("boom")):
+            with tempfile.TemporaryDirectory() as tmpdir:
+                queue_dir = Path(tmpdir) / "queue"
+                queue_dir.mkdir(parents=True)
+                (queue_dir / "one.jsonl").write_text('{"session_id": "s"}\n', encoding="utf-8")
+                with patch.object(mem, "QUEUE_DIR", queue_dir):
+                    result = mem.flush_queue_if_possible(Path("/some/vault"), Path("/some/local"))
             self.assertEqual(result, 0)
 
 
-class TestBuildCandidatesNoRecentSummary(unittest.TestCase):
-    """build_candidates() should NOT generate recent_summary observations from summary events."""
+class TestCmdCleanup(CliTestBase):
+    """cmd_cleanup() removes stale recent_summary memories/observations and dedupes superseded."""
 
-    def _make_event(self, **kwargs) -> sqlite3.Row:
-        """Create a sqlite3.Row-like object for testing."""
-        conn = sqlite3.connect(":memory:")
-        conn.row_factory = sqlite3.Row
-        defaults = {
-            "id": "evt_test",
-            "role": "assistant",
-            "kind": "summary",
-            "content": "This is a session summary text.",
-            "user_id": "user_test",
-            "project_id": "proj_test",
-            "importance": 0.9,
-            "client": "claude-code",
-        }
-        defaults.update(kwargs)
-        cols = ", ".join(defaults.keys())
-        placeholders = ", ".join("?" for _ in defaults)
-        conn.execute(f"CREATE TABLE t ({cols})")
-        conn.execute(f"INSERT INTO t VALUES ({placeholders})", list(defaults.values()))
-        row = conn.execute("SELECT * FROM t").fetchone()
-        conn.close()
-        return row
+    def _seed(self):
+        self.local_store.ensure_session("sess_cln", client="c", user_id="u1", project_id="p1")
+        self.local_store.append_observation(
+            session_id="sess_cln",
+            source_event_id="evt_summary",
+            entity_type="project",
+            entity_id="p1",
+            attribute="recent_summary",
+            value={"value": "summary text"},
+            confidence=0.8,
+            scope="project",
+            extractor_version="test",
+        )
+        self.local_store.append_observation(
+            session_id="sess_cln",
+            source_event_id="evt_editor",
+            entity_type="user",
+            entity_id="u1",
+            attribute="preferred_editor",
+            value={"value": "Neovim"},
+            confidence=0.8,
+            scope="global",
+            extractor_version="test",
+        )
 
-    def test_summary_event_does_not_generate_recent_summary_observation(self):
-        # Arrange
-        event = self._make_event(kind="summary", content="Some session summary.")
+        # recent_summary memory (should be deleted unconditionally)
+        self.markdown_store.upsert_from_observation(
+            type="reference",
+            entity_type="project",
+            entity_id="p1",
+            key="recent_summary",
+            scope="project",
+            project_id="p1",
+            summary="summary",
+        )
 
-        # Act
-        candidates = mem.build_candidates(event)
+        # kept memory
+        self.markdown_store.upsert_from_observation(
+            type="profile",
+            entity_type="user",
+            entity_id="u1",
+            key="preferred_language_runtime",
+            scope="global",
+            project_id=None,
+            summary="Python",
+        )
 
-        # Assert: no candidate should have attribute 'recent_summary'
-        attributes = [c.attribute for c in candidates]
+        # repeated content changes fold into the same file's history rather
+        # than creating separate records (see MarkdownMemoryStore)
+        for value in ("Vim", "Emacs"):
+            self.markdown_store.upsert_from_observation(
+                type="profile",
+                entity_type="user",
+                entity_id="u1",
+                key="preferred_editor",
+                scope="global",
+                project_id=None,
+                summary=f"好みのエディタ: {value}",
+            )
+
+    def test_deletes_recent_summary_memories(self):
+        self._seed()
+        result = self.run_cmd(mem.cmd_cleanup)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["deleted_summary_memories"], 1)
+
+    def test_deletes_recent_summary_observations(self):
+        self._seed()
+        result = self.run_cmd(mem.cmd_cleanup)
+        self.assertEqual(result["deleted_summary_observations"], 1)
+        remaining = self.local_store.iter_observations("sess_cln")
+        attributes = [o["attribute"] for o in remaining]
         self.assertNotIn("recent_summary", attributes)
+        self.assertIn("preferred_editor", attributes)
 
-    def test_summary_event_generates_no_candidates_at_all(self):
-        # Arrange: summary event with no user/command content
-        event = self._make_event(kind="summary", role="assistant", content="Summary text.")
+    def test_preserves_other_memories(self):
+        self._seed()
+        self.run_cmd(mem.cmd_cleanup)
+        active = self.markdown_store.search(type="profile")
+        titles = [m["title"] for m in active]
+        self.assertIn("Preferred Language Runtime", titles)
 
-        # Act
-        candidates = mem.build_candidates(event)
-
-        # Assert: summary events should produce zero candidates
-        self.assertEqual(len(candidates), 0)
-
-    def test_command_event_still_generates_recent_command_observation(self):
-        # Arrange: command event should still work
-        event = self._make_event(
-            kind="command",
-            role="assistant",
-            content='{"command": "ls -la"}',
-            importance=0.7,
-        )
-
-        # Act
-        candidates = mem.build_candidates(event)
-
-        # Assert: recent_command observation is still generated
-        attributes = [c.attribute for c in candidates]
-        self.assertIn("recent_command", attributes)
-        self.assertNotIn("recent_summary", attributes)
-
-
-class TestConsolidateSessionFilter(unittest.TestCase):
-    """cmd_end_session consolidate should only process observations from the current session."""
-
-    def _setup_db_with_two_sessions(self) -> tuple[Path, str, str]:
-        """Set up a DB with two sessions and observations from each."""
-        db_path = make_temp_db()
-        conn = mem.connect_readwrite(db_path)
-
-        # Session 1
-        sess1_id = "sess_old0000000000"
-        conn.execute(
-            "INSERT INTO sessions(id, client, user_id, project_id, started_at) VALUES(?,?,?,?,?)",
-            (sess1_id, "claude-code", "user1", "proj1", "2024-01-01T00:00:00+00:00"),
-        )
-        evt1_id = "evt_old0000000000"
-        conn.execute(
-            "INSERT INTO events(id, session_id, role, kind, content, created_at, importance) VALUES(?,?,?,?,?,?,?)",
-            (evt1_id, sess1_id, "user", "message", "I like TypeScript", "2024-01-01T00:00:00+00:00", 0.5),
-        )
-        obs1_id = "obs_old0000000000"
-        conn.execute(
-            """
-            INSERT INTO observations(id, source_event_id, entity_type, entity_id, attribute, value_json, confidence, scope, observed_at, extractor_version)
-            VALUES(?, ?, 'user', 'user1', 'preferred_language_runtime', '{"memory_type":"semantic","value":"TypeScript"}', 0.75, 'global', '2024-01-01T00:00:00+00:00', 'test')
-            """,
-            (obs1_id, evt1_id),
-        )
-
-        # Session 2 (current)
-        sess2_id = "sess_new0000000000"
-        conn.execute(
-            "INSERT INTO sessions(id, client, user_id, project_id, started_at) VALUES(?,?,?,?,?)",
-            (sess2_id, "claude-code", "user1", "proj1", "2024-06-01T00:00:00+00:00"),
-        )
-        evt2_id = "evt_new0000000000"
-        conn.execute(
-            "INSERT INTO events(id, session_id, role, kind, content, created_at, importance) VALUES(?,?,?,?,?,?,?)",
-            (evt2_id, sess2_id, "user", "message", "I like Python", "2024-06-01T00:00:00+00:00", 0.5),
-        )
-        obs2_id = "obs_new0000000000"
-        conn.execute(
-            """
-            INSERT INTO observations(id, source_event_id, entity_type, entity_id, attribute, value_json, confidence, scope, observed_at, extractor_version)
-            VALUES(?, ?, 'user', 'user1', 'preferred_language_runtime', '{"memory_type":"semantic","value":"Python"}', 0.75, 'global', '2024-06-01T00:00:00+00:00', 'test')
-            """,
-            (obs2_id, evt2_id),
-        )
-
-        conn.commit()
-        conn.close()
-        return db_path, sess2_id, obs1_id
-
-    def test_consolidate_in_end_session_only_processes_current_session_observations(self):
-        """When --consolidate is used in end-session, only current session's observations become memories."""
-        import argparse
-        import io
-
-        db_path, sess2_id, obs1_id = self._setup_db_with_two_sessions()
-        try:
-            # Ensure session 2 is not ended yet
-            conn = mem.connect_readwrite(db_path)
-            conn.execute(
-                "UPDATE sessions SET ended_at = '2024-01-01T01:00:00+00:00' WHERE id = 'sess_old0000000000'"
-            )
-            conn.commit()
-            conn.close()
-
-            args = argparse.Namespace(
-                db=db_path,
-                session_id=sess2_id,
-                summary="test summary",
-                append_summary_event=False,
-                extract=False,
-                consolidate=True,
-            )
-
-            captured = io.StringIO()
-            with patch("sys.stdout", captured):
-                mem.cmd_end_session(args)
-
-            # Only session 2's observation (obs2) should have been consolidated into a memory.
-            # The old session 1 observation (obs1) should NOT create a new memory in this run.
-            result = json.loads(captured.getvalue())
-            self.assertTrue(result["ok"])
-
-            conn = mem.connect_readonly(db_path)
-            # Check that memory_sources only contain obs from session 2
-            sources = conn.execute(
-                """
-                SELECT ms.observation_id
-                FROM memory_sources ms
-                JOIN observations o ON o.id = ms.observation_id
-                JOIN events e ON e.id = o.source_event_id
-                WHERE e.session_id = 'sess_old0000000000'
-                  AND ms.memory_id IN (SELECT id FROM memories WHERE status = 'active')
-                """
-            ).fetchall()
-            conn.close()
-            # No active memories should have sources from session 1 after this run
-            self.assertEqual(len(sources), 0)
-        finally:
-            db_path.unlink(missing_ok=True)
-
-
-class TestCmdCleanup(unittest.TestCase):
-    """cmd_cleanup() removes stale recent_summary memories and observations."""
-
-    def _setup_db_with_recent_summary_data(self) -> Path:
-        """Set up a DB with recent_summary memories (active and superseded)."""
-        db_path = make_temp_db()
-        conn = mem.connect_readwrite(db_path)
-
-        # Insert a session and events (required for FOREIGN KEY constraints)
-        conn.execute(
-            "INSERT INTO sessions(id, client, user_id, project_id, started_at) VALUES(?,?,?,?,?)",
-            ("sess_cln0000000000", "claude-code", "user1", "proj1", "2024-01-01T00:00:00+00:00"),
-        )
-        for i in range(3):
-            evt_id = f"evt_cln{i:013d}"
-            conn.execute(
-                "INSERT INTO events(id, session_id, role, kind, content, created_at, importance) VALUES(?,?,?,?,?,?,?)",
-                (evt_id, "sess_cln0000000000", "assistant", "summary", f"summary {i}", "2024-01-01T00:00:00+00:00", 0.9),
-            )
-        # Insert some recent_summary observations
-        for i in range(3):
-            obs_id = f"obs_cln{i:013d}"
-            evt_id = f"evt_cln{i:013d}"
-            conn.execute(
-                """
-                INSERT INTO observations(id, source_event_id, entity_type, entity_id, attribute, value_json, confidence, scope, observed_at, extractor_version)
-                VALUES(?, ?, 'project', 'proj1', 'recent_summary', ?, 0.8, 'project', '2024-01-01T00:00:00+00:00', 'test')
-                """,
-                (obs_id, evt_id, json.dumps({"value": f"summary {i}"})),
-            )
-        # Insert superseded recent_summary memories
-        for i in range(5):
-            mem_id = f"mem_cln{i:013d}"
-            conn.execute(
-                """
-                INSERT INTO memories(id, memory_type, entity_type, entity_id, key, value_json, summary, confidence, salience, scope, project_id, status, valid_from, created_at, updated_at)
-                VALUES(?, 'episodic', 'project', 'proj1', 'recent_summary', ?, 'summary', 0.8, 0.8, 'project', 'proj1', 'superseded', '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00')
-                """,
-                (mem_id, json.dumps({"value": f"old summary {i}"})),
-            )
-        # Insert 1 active recent_summary memory
-        conn.execute(
-            """
-            INSERT INTO memories(id, memory_type, entity_type, entity_id, key, value_json, summary, confidence, salience, scope, project_id, status, valid_from, created_at, updated_at)
-            VALUES('mem_active_summary', 'episodic', 'project', 'proj1', 'recent_summary', '{"value":"current"}', 'summary', 0.8, 0.8, 'project', 'proj1', 'active', '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00')
-            """,
-        )
-        # Insert a different key memory that should NOT be deleted
-        conn.execute(
-            """
-            INSERT INTO memories(id, memory_type, entity_type, entity_id, key, value_json, summary, confidence, salience, scope, project_id, status, valid_from, created_at, updated_at)
-            VALUES('mem_keep_lang', 'semantic', 'user', 'user1', 'preferred_language_runtime', '{"value":"Python"}', 'Python', 0.9, 0.9, 'global', NULL, 'active', '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00')
-            """,
-        )
-        conn.commit()
-        conn.close()
-        return db_path
-
-    def _run_cleanup(self, db_path: Path) -> dict:
-        import argparse
-        import io
-
-        args = argparse.Namespace(db=db_path)
-        captured = io.StringIO()
-        with patch("sys.stdout", captured):
-            mem.cmd_cleanup(args)
-        return json.loads(captured.getvalue())
-
-    def test_cleanup_deletes_superseded_recent_summary_memories(self):
-        # Arrange
-        db_path = self._setup_db_with_recent_summary_data()
-        try:
-            # Act
-            result = self._run_cleanup(db_path)
-
-            # Assert
-            self.assertTrue(result["ok"])
-            self.assertEqual(result["deleted_summary_memories"], 6)  # 5 superseded + 1 active
-        finally:
-            db_path.unlink(missing_ok=True)
-
-    def test_cleanup_deletes_recent_summary_observations(self):
-        # Arrange
-        db_path = self._setup_db_with_recent_summary_data()
-        try:
-            # Act
-            result = self._run_cleanup(db_path)
-
-            # Assert
-            self.assertTrue(result["ok"])
-            self.assertEqual(result["deleted_summary_observations"], 3)
-        finally:
-            db_path.unlink(missing_ok=True)
-
-    def test_cleanup_deduplicates_superseded(self):
-        # Arrange
-        db_path = self._setup_db_with_recent_summary_data()
-        try:
-            # Act
-            result = self._run_cleanup(db_path)
-
-            # Assert
-            self.assertTrue(result["ok"])
-            self.assertIn("deleted_duplicate_superseded", result)
-        finally:
-            db_path.unlink(missing_ok=True)
-
-    def test_cleanup_preserves_other_memories(self):
-        # Arrange
-        db_path = self._setup_db_with_recent_summary_data()
-        try:
-            # Act
-            self._run_cleanup(db_path)
-
-            # Assert: preferred_language_runtime memory is still there
-            conn = mem.connect_readonly(db_path)
-            row = conn.execute(
-                "SELECT id FROM memories WHERE id = 'mem_keep_lang'"
-            ).fetchone()
-            conn.close()
-            self.assertIsNotNone(row)
-        finally:
-            db_path.unlink(missing_ok=True)
-
-    def test_cleanup_returns_ok_true(self):
-        # Arrange
-        db_path = make_temp_db()
-        try:
-            # Act
-            result = self._run_cleanup(db_path)
-
-            # Assert: even with empty DB, returns ok
-            self.assertTrue(result["ok"])
-        finally:
-            db_path.unlink(missing_ok=True)
+    def test_returns_ok_true_with_empty_store(self):
+        result = self.run_cmd(mem.cmd_cleanup)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["deleted_summary_memories"], 0)
 
 
 class TestListUnextractedSubcommand(unittest.TestCase):
     """list-unextracted subcommand should be registered and return JSON with sessions."""
 
     def test_list_unextracted_subcommand_exists(self):
-        # Arrange
         parser = mem.build_parser()
-
-        import tempfile
-
-        with tempfile.NamedTemporaryFile(suffix=".db") as f:
-            args = parser.parse_args(["--db", f.name, "list-unextracted"])
-
-        # Assert
+        args = parser.parse_args(["list-unextracted"])
         self.assertEqual(args.command, "list-unextracted")
         self.assertTrue(callable(args.func))
 
     def test_list_unextracted_func_is_cmd_list_unextracted(self):
-        # Arrange
         parser = mem.build_parser()
-
-        import tempfile
-
-        with tempfile.NamedTemporaryFile(suffix=".db") as f:
-            args = parser.parse_args(["--db", f.name, "list-unextracted"])
-
-        # Assert
+        args = parser.parse_args(["list-unextracted"])
         self.assertIs(args.func, mem.cmd_list_unextracted)
 
     def test_list_unextracted_default_limit_is_10(self):
-        # Arrange
         parser = mem.build_parser()
-
-        import tempfile
-
-        with tempfile.NamedTemporaryFile(suffix=".db") as f:
-            args = parser.parse_args(["--db", f.name, "list-unextracted"])
-
-        # Assert
+        args = parser.parse_args(["list-unextracted"])
         self.assertEqual(args.limit, 10)
 
-    def test_list_unextracted_returns_ok_and_sessions(self):
-        # Arrange
-        import argparse
-        import io
 
-        db_path = make_temp_db()
-        try:
-            conn = mem.connect_readwrite(db_path)
-            conn.execute(
-                "INSERT INTO sessions(id, client, user_id, started_at, summary) VALUES(?,?,?,?,?)",
-                ("sess_lu01", "claude-code", "u1", "2024-01-01T00:00:00+00:00", "some summary"),
-            )
-            conn.commit()
-            conn.close()
+class TestListUnextractedCmd(CliTestBase):
+    def test_returns_ok_and_sessions(self):
+        self.local_store.ensure_session("sess_lu01", client="claude-code", user_id="u1", project_id=None)
+        self.local_store.update_session("sess_lu01", summary="some summary")
 
-            args = argparse.Namespace(db=db_path, limit=10)
-            captured = io.StringIO()
-            with patch("sys.stdout", captured):
-                mem.cmd_list_unextracted(args)
+        result = self.run_cmd(mem.cmd_list_unextracted, limit=10)
 
-            result = json.loads(captured.getvalue())
+        self.assertTrue(result["ok"])
+        ids = [s["id"] for s in result["sessions"]]
+        self.assertIn("sess_lu01", ids)
 
-            # Assert
-            self.assertTrue(result["ok"])
-            self.assertIn("sessions", result)
-            self.assertIn("count", result)
-            ids = [s["id"] for s in result["sessions"]]
-            self.assertIn("sess_lu01", ids)
-        finally:
-            db_path.unlink(missing_ok=True)
+    def test_excludes_already_extracted(self):
+        self.local_store.ensure_session("sess_done01", client="claude-code", user_id="u1", project_id=None)
+        self.local_store.update_session("sess_done01", summary="done")
+        self.local_store.mark_extracted("sess_done01")
 
-    def test_list_unextracted_excludes_already_extracted(self):
-        # Arrange
-        import argparse
-        import io
+        result = self.run_cmd(mem.cmd_list_unextracted, limit=10)
 
-        db_path = make_temp_db()
-        try:
-            conn = mem.connect_readwrite(db_path)
-            conn.execute(
-                "INSERT INTO sessions(id, client, user_id, started_at, summary, extracted_at) VALUES(?,?,?,?,?,?)",
-                ("sess_done01", "claude-code", "u1", "2024-01-01T00:00:00+00:00", "done", "2024-01-02T00:00:00+00:00"),
-            )
-            conn.commit()
-            conn.close()
-
-            args = argparse.Namespace(db=db_path, limit=10)
-            captured = io.StringIO()
-            with patch("sys.stdout", captured):
-                mem.cmd_list_unextracted(args)
-
-            result = json.loads(captured.getvalue())
-
-            # Assert
-            ids = [s["id"] for s in result["sessions"]]
-            self.assertNotIn("sess_done01", ids)
-        finally:
-            db_path.unlink(missing_ok=True)
-
-
-class TestMigrateSchemaExtractedAt(unittest.TestCase):
-    """migrate_schema() should add extracted_at column to sessions table."""
-
-    def test_sessions_table_has_extracted_at_column(self):
-        # Arrange
-        db_path = make_temp_db()
-        try:
-            conn = mem.connect_readonly(db_path)
-
-            # Act
-            columns = [row[1] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()]
-            conn.close()
-
-            # Assert
-            self.assertIn("extracted_at", columns)
-        finally:
-            db_path.unlink(missing_ok=True)
-
-    def test_migrate_schema_idempotent_with_extracted_at(self):
-        # Arrange: run migration twice
-        db_path = make_temp_db()
-        try:
-            conn = mem.connect_readwrite(db_path)
-            # Running migrate_schema again should not raise
-            mem.migrate_schema(conn)
-            conn.close()
-
-            # Assert: column still exists
-            conn2 = mem.connect_readonly(db_path)
-            columns = [row[1] for row in conn2.execute("PRAGMA table_info(sessions)").fetchall()]
-            conn2.close()
-            self.assertIn("extracted_at", columns)
-        finally:
-            db_path.unlink(missing_ok=True)
-
-
-class TestFetchUnextractedSessions(unittest.TestCase):
-    """fetch_unextracted_sessions() should return sessions without extracted_at and with summary."""
-
-    def _setup_sessions(self, db_path: Path) -> None:
-        conn = mem.connect_readwrite(db_path)
-        # Session with summary, no extracted_at → should be returned
-        conn.execute(
-            "INSERT INTO sessions(id, client, user_id, started_at, summary) VALUES(?,?,?,?,?)",
-            ("sess_unext01", "claude-code", "u1", "2024-01-01T00:00:00+00:00", "some summary"),
-        )
-        # Session without summary → should NOT be returned
-        conn.execute(
-            "INSERT INTO sessions(id, client, user_id, started_at) VALUES(?,?,?,?)",
-            ("sess_nosummary", "claude-code", "u1", "2024-01-02T00:00:00+00:00"),
-        )
-        # Session with extracted_at → should NOT be returned
-        conn.execute(
-            "INSERT INTO sessions(id, client, user_id, started_at, summary, extracted_at) VALUES(?,?,?,?,?,?)",
-            ("sess_extracted", "claude-code", "u1", "2024-01-03T00:00:00+00:00", "done", "2024-01-03T01:00:00+00:00"),
-        )
-        conn.commit()
-        conn.close()
-
-    def test_returns_only_sessions_with_summary_and_no_extracted_at(self):
-        # Arrange
-        db_path = make_temp_db()
-        try:
-            self._setup_sessions(db_path)
-            conn = mem.connect_readwrite(db_path)
-
-            # Act
-            rows = mem.fetch_unextracted_sessions(conn)
-            conn.close()
-
-            # Assert
-            ids = [row["id"] for row in rows]
-            self.assertIn("sess_unext01", ids)
-            self.assertNotIn("sess_nosummary", ids)
-            self.assertNotIn("sess_extracted", ids)
-        finally:
-            db_path.unlink(missing_ok=True)
-
-    def test_respects_limit(self):
-        # Arrange
-        db_path = make_temp_db()
-        try:
-            conn = mem.connect_readwrite(db_path)
-            for i in range(5):
-                conn.execute(
-                    "INSERT INTO sessions(id, client, user_id, started_at, summary) VALUES(?,?,?,?,?)",
-                    (f"sess_lim{i:010d}", "claude-code", "u1", f"2024-0{i+1}-01T00:00:00+00:00", f"summary {i}"),
-                )
-            conn.commit()
-
-            # Act
-            rows = mem.fetch_unextracted_sessions(conn, limit=3)
-            conn.close()
-
-            # Assert
-            self.assertEqual(len(rows), 3)
-        finally:
-            db_path.unlink(missing_ok=True)
-
-
-class TestFetchActiveMemoriesSummary(unittest.TestCase):
-    """fetch_active_memories_summary() should return key/summary text for active memories."""
-
-    def test_returns_string(self):
-        # Arrange
-        db_path = make_temp_db()
-        try:
-            conn = mem.connect_readwrite(db_path)
-
-            # Act
-            result = mem.fetch_active_memories_summary(conn)
-            conn.close()
-
-            # Assert
-            self.assertIsInstance(result, str)
-        finally:
-            db_path.unlink(missing_ok=True)
-
-    def test_includes_active_memory_key_and_summary(self):
-        # Arrange
-        db_path = make_temp_db()
-        try:
-            conn = mem.connect_readwrite(db_path)
-            conn.execute(
-                """
-                INSERT INTO memories(id, memory_type, entity_type, entity_id, key, value_json, summary,
-                    confidence, salience, scope, status, valid_from, created_at, updated_at)
-                VALUES('mem_test01', 'semantic', 'user', 'default', 'preferred_editor', '{"value":"Neovim"}',
-                    '好みのエディタ: Neovim', 0.9, 0.9, 'global', 'active',
-                    '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00')
-                """
-            )
-            conn.commit()
-
-            # Act
-            result = mem.fetch_active_memories_summary(conn)
-            conn.close()
-
-            # Assert
-            self.assertIn("preferred_editor", result)
-            self.assertIn("好みのエディタ: Neovim", result)
-        finally:
-            db_path.unlink(missing_ok=True)
-
-    def test_excludes_non_active_memories(self):
-        # Arrange
-        db_path = make_temp_db()
-        try:
-            conn = mem.connect_readwrite(db_path)
-            conn.execute(
-                """
-                INSERT INTO memories(id, memory_type, entity_type, entity_id, key, value_json, summary,
-                    confidence, salience, scope, status, valid_from, created_at, updated_at)
-                VALUES('mem_superseded', 'semantic', 'user', 'default', 'old_key', '{"value":"old"}',
-                    'old summary', 0.5, 0.5, 'global', 'superseded',
-                    '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00', '2024-01-01T00:00:00+00:00')
-                """
-            )
-            conn.commit()
-
-            # Act
-            result = mem.fetch_active_memories_summary(conn)
-            conn.close()
-
-            # Assert
-            self.assertNotIn("old_key", result)
-        finally:
-            db_path.unlink(missing_ok=True)
+        ids = [s["id"] for s in result["sessions"]]
+        self.assertNotIn("sess_done01", ids)
 
 
 class TestWriteMemorySubcommand(unittest.TestCase):
-    """write-memory subcommand should create observation, consolidate, and return ok."""
+    """write-memory subcommand should be registered with the expected defaults."""
 
     def test_write_memory_subcommand_exists(self):
-        # Arrange
         parser = mem.build_parser()
-
-        import tempfile
-
-        with tempfile.NamedTemporaryFile(suffix=".db") as f:
-            args = parser.parse_args([
-                "--db", f.name, "write-memory",
-                "--session-id", "sess_test01",
-                "--memory-type", "semantic",
-                "--key", "preferred_editor",
-                "--summary", "好みのエディタ: Neovim",
-            ])
-
-        # Assert
+        args = parser.parse_args([
+            "write-memory",
+            "--session-id", "sess_test01",
+            "--memory-type", "profile",
+            "--key", "preferred_editor",
+            "--summary", "好みのエディタ: Neovim",
+        ])
         self.assertEqual(args.command, "write-memory")
         self.assertTrue(callable(args.func))
-
-    def test_write_memory_func_is_cmd_write_memory(self):
-        # Arrange
-        parser = mem.build_parser()
-
-        import tempfile
-
-        with tempfile.NamedTemporaryFile(suffix=".db") as f:
-            args = parser.parse_args([
-                "--db", f.name, "write-memory",
-                "--session-id", "sess_test01",
-                "--memory-type", "semantic",
-                "--key", "preferred_editor",
-                "--summary", "好みのエディタ: Neovim",
-            ])
-
-        # Assert
         self.assertIs(args.func, mem.cmd_write_memory)
 
-    def test_write_memory_creates_observation_and_memory(self):
-        # Arrange
-        import argparse
-        import io
-
-        db_path = make_temp_db()
-        try:
-            # セッションを先に作成
-            conn = mem.connect_readwrite(db_path)
-            conn.execute(
-                "INSERT INTO sessions(id, client, user_id, started_at) VALUES(?,?,?,?)",
-                ("sess_wm01", "claude-code", "default", "2024-01-01T00:00:00+00:00"),
-            )
-            conn.commit()
-            conn.close()
-
-            args = argparse.Namespace(
-                db=db_path,
-                session_id="sess_wm01",
-                memory_type="semantic",
-                entity_type="user",
-                entity_id="default",
-                key="preferred_editor",
-                summary="好みのエディタ: Neovim",
-                confidence=0.9,
-                scope="global",
-                project_id=None,
-            )
-            captured = io.StringIO()
-            with patch("sys.stdout", captured):
-                mem.cmd_write_memory(args)
-
-            result = json.loads(captured.getvalue())
-
-            # Assert
-            self.assertTrue(result["ok"])
-            self.assertIn("observation_id", result)
-            self.assertIn("event_id", result)
-
-            conn2 = mem.connect_readonly(db_path)
-            obs_count = conn2.execute(
-                "SELECT COUNT(*) FROM observations WHERE extractor_version = 'claude-code-v1'"
-            ).fetchone()[0]
-            mem_count = conn2.execute(
-                "SELECT COUNT(*) FROM memories WHERE key = 'preferred_editor' AND status = 'active'"
-            ).fetchone()[0]
-            conn2.close()
-
-            self.assertEqual(obs_count, 1)
-            self.assertEqual(mem_count, 1)
-        finally:
-            db_path.unlink(missing_ok=True)
-
     def test_write_memory_default_confidence_and_scope(self):
-        # Arrange
         parser = mem.build_parser()
-
-        import tempfile
-
-        with tempfile.NamedTemporaryFile(suffix=".db") as f:
-            args = parser.parse_args([
-                "--db", f.name, "write-memory",
-                "--session-id", "sess_test02",
-                "--memory-type", "procedural",
-                "--key", "response_language",
-                "--summary", "応答は日本語で行う",
-            ])
-
-        # Assert: defaults
+        args = parser.parse_args([
+            "write-memory",
+            "--session-id", "sess_test02",
+            "--memory-type", "feedback",
+            "--key", "response_language",
+            "--summary", "応答は日本語で行う",
+        ])
         self.assertAlmostEqual(args.confidence, 0.8)
         self.assertEqual(args.scope, "global")
         self.assertEqual(args.entity_type, "user")
         self.assertEqual(args.entity_id, "default")
 
 
+class TestCmdWriteMemory(CliTestBase):
+    def test_creates_observation_and_active_memory(self):
+        result = self.run_cmd(
+            mem.cmd_write_memory,
+            session_id="sess_wm01",
+            memory_type="profile",
+            entity_type="user",
+            entity_id="default",
+            key="preferred_editor",
+            summary="ユーザーは Neovim を好む",
+            confidence=0.9,
+            scope="global",
+            project_id=None,
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertIn("observation_id", result)
+        self.assertIn("event_id", result)
+
+        active = self.markdown_store.search(type="profile")
+        matching = [m for m in active if m["title"] == "Preferred Editor"]
+        self.assertEqual(len(matching), 1)
+
+        observations = self.local_store.iter_observations("sess_wm01")
+        self.assertEqual(len(observations), 1)
+
+    def test_project_scope_with_project_id_writes_a_project_scoped_memory(self):
+        result = self.run_cmd(
+            mem.cmd_write_memory,
+            session_id="sess_wm02",
+            memory_type="reference",
+            entity_type="user",
+            entity_id="default",
+            key="api_routing",
+            summary="APIルーティング方針: REST",
+            confidence=0.8,
+            scope="project",
+            project_id="lab-web",
+        )
+
+        self.assertTrue(result["ok"])
+        matching = self.markdown_store.search(scope="project", project_id="lab-web")
+        self.assertEqual(len(matching), 1)
+        self.assertEqual(matching[0]["project_id"], "lab-web")
+
+        global_matching = self.markdown_store.search(scope="global")
+        self.assertEqual(global_matching, [])
+
+    def test_project_scope_without_project_id_raises_instead_of_writing_a_global_memory(self):
+        with self.assertRaises(SystemExit):
+            self.run_cmd(
+                mem.cmd_write_memory,
+                session_id="sess_wm03",
+                memory_type="reference",
+                entity_type="user",
+                entity_id="default",
+                key="api_routing",
+                summary="APIルーティング方針: REST",
+                confidence=0.8,
+                scope="project",
+                project_id=None,
+            )
+
+        self.assertEqual(self.markdown_store.search(), [])
+
+    def test_project_scope_without_project_id_writes_nothing_to_local_store(self):
+        """Validation must happen before any local-store writes (fail fast).
+
+        Otherwise a poisoned observation (scope="project", project_id=None)
+        is left behind in the local store even though the CLI call itself
+        raised, and later trips up batch consolidation (see
+        ``TestConsolidateResilientToPoisonedObservations``).
+        """
+        with self.assertRaises(SystemExit):
+            self.run_cmd(
+                mem.cmd_write_memory,
+                session_id="sess_wm04",
+                memory_type="reference",
+                entity_type="user",
+                entity_id="default",
+                key="api_routing",
+                summary="APIルーティング方針: REST",
+                confidence=0.8,
+                scope="project",
+                project_id=None,
+            )
+
+        self.assertEqual(self.local_store.iter_observations("sess_wm04"), [])
+        self.assertEqual(self.local_store.iter_events("sess_wm04"), [])
+
+
 class TestMarkExtractedSubcommand(unittest.TestCase):
-    """mark-extracted subcommand should mark a session as extracted."""
+    """mark-extracted subcommand should be registered."""
 
     def test_mark_extracted_subcommand_exists(self):
-        # Arrange
         parser = mem.build_parser()
-
-        import tempfile
-
-        with tempfile.NamedTemporaryFile(suffix=".db") as f:
-            args = parser.parse_args(["--db", f.name, "mark-extracted", "--session-id", "sess_x01"])
-
-        # Assert
+        args = parser.parse_args(["mark-extracted", "--session-id", "sess_x01"])
         self.assertEqual(args.command, "mark-extracted")
-        self.assertTrue(callable(args.func))
-
-    def test_mark_extracted_func_is_cmd_mark_extracted(self):
-        # Arrange
-        parser = mem.build_parser()
-
-        import tempfile
-
-        with tempfile.NamedTemporaryFile(suffix=".db") as f:
-            args = parser.parse_args(["--db", f.name, "mark-extracted", "--session-id", "sess_x01"])
-
-        # Assert
         self.assertIs(args.func, mem.cmd_mark_extracted)
 
-    def test_mark_extracted_updates_session(self):
-        # Arrange
-        import argparse
-        import io
 
-        db_path = make_temp_db()
-        try:
-            conn = mem.connect_readwrite(db_path)
-            conn.execute(
-                "INSERT INTO sessions(id, client, user_id, started_at, summary) VALUES(?,?,?,?,?)",
-                ("sess_me01", "claude-code", "u1", "2024-01-01T00:00:00+00:00", "some summary"),
-            )
-            conn.commit()
-            conn.close()
+class TestCmdMarkExtracted(CliTestBase):
+    def test_marks_session_extracted(self):
+        self.local_store.ensure_session("sess_me01", client="c", user_id="u1", project_id=None)
+        self.local_store.update_session("sess_me01", summary="some summary")
 
-            args = argparse.Namespace(db=db_path, session_id="sess_me01")
-            captured = io.StringIO()
-            with patch("sys.stdout", captured):
-                mem.cmd_mark_extracted(args)
+        result = self.run_cmd(mem.cmd_mark_extracted, session_id="sess_me01")
 
-            result = json.loads(captured.getvalue())
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["updated"], 1)
+        session = self.local_store.get_session("sess_me01")
+        self.assertIsNotNone(session["extracted_at"])
 
-            # Assert
-            self.assertTrue(result["ok"])
-            self.assertEqual(result["updated"], 1)
+    def test_already_extracted_returns_zero(self):
+        self.local_store.ensure_session("sess_already", client="c", user_id="u1", project_id=None)
+        self.local_store.mark_extracted("sess_already")
 
-            conn2 = mem.connect_readonly(db_path)
-            row = conn2.execute(
-                "SELECT extracted_at FROM sessions WHERE id = ?", ("sess_me01",)
-            ).fetchone()
-            conn2.close()
-            self.assertIsNotNone(row["extracted_at"])
-        finally:
-            db_path.unlink(missing_ok=True)
+        result = self.run_cmd(mem.cmd_mark_extracted, session_id="sess_already")
 
-    def test_mark_extracted_already_extracted_returns_zero(self):
-        # Arrange
-        import argparse
-        import io
-
-        db_path = make_temp_db()
-        try:
-            conn = mem.connect_readwrite(db_path)
-            conn.execute(
-                "INSERT INTO sessions(id, client, user_id, started_at, summary, extracted_at) VALUES(?,?,?,?,?,?)",
-                ("sess_already", "claude-code", "u1", "2024-01-01T00:00:00+00:00", "done", "2024-01-02T00:00:00+00:00"),
-            )
-            conn.commit()
-            conn.close()
-
-            args = argparse.Namespace(db=db_path, session_id="sess_already")
-            captured = io.StringIO()
-            with patch("sys.stdout", captured):
-                mem.cmd_mark_extracted(args)
-
-            result = json.loads(captured.getvalue())
-
-            # Assert: already extracted → updated = 0
-            self.assertTrue(result["ok"])
-            self.assertEqual(result["updated"], 0)
-        finally:
-            db_path.unlink(missing_ok=True)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["updated"], 0)
 
 
 class TestCleanupSubcommandRegistered(unittest.TestCase):
     """cleanup subcommand should be registered in build_parser()."""
 
     def test_cleanup_subcommand_exists(self):
-        # Arrange
         parser = mem.build_parser()
-
-        # Act: parse cleanup command (should not raise)
-        import tempfile
-
-        with tempfile.NamedTemporaryFile(suffix=".db") as f:
-            args = parser.parse_args(["--db", f.name, "cleanup"])
-
-        # Assert
+        args = parser.parse_args(["cleanup"])
         self.assertEqual(args.command, "cleanup")
-        self.assertTrue(callable(args.func))
-
-    def test_cleanup_func_is_cmd_cleanup(self):
-        # Arrange
-        parser = mem.build_parser()
-
-        import tempfile
-
-        with tempfile.NamedTemporaryFile(suffix=".db") as f:
-            args = parser.parse_args(["--db", f.name, "cleanup"])
-
-        # Assert
         self.assertIs(args.func, mem.cmd_cleanup)
+
+
+class TestDeprecatedDbFlag(unittest.TestCase):
+    """--db is accepted but ignored (deprecated no-op)."""
+
+    def test_db_flag_is_accepted(self):
+        parser = mem.build_parser()
+        args = parser.parse_args(["--db", "/some/legacy/path.db", "cleanup"])
+        self.assertEqual(args.db, Path("/some/legacy/path.db"))
+
+    def test_db_flag_defaults_to_none(self):
+        parser = mem.build_parser()
+        args = parser.parse_args(["cleanup"])
+        self.assertIsNone(args.db)
+
+
+class TestVaultAndLocalDirFlags(unittest.TestCase):
+    """--vault and --local-dir override the resolved directories."""
+
+    def test_vault_flag_is_accepted(self):
+        parser = mem.build_parser()
+        args = parser.parse_args(["--vault", "/some/vault", "cleanup"])
+        self.assertEqual(args.vault, Path("/some/vault"))
+
+    def test_local_dir_flag_is_accepted(self):
+        parser = mem.build_parser()
+        args = parser.parse_args(["--local-dir", "/some/local", "cleanup"])
+        self.assertEqual(args.local_dir, Path("/some/local"))
 
 
 if __name__ == "__main__":

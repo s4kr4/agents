@@ -1,22 +1,29 @@
 #!/usr/bin/env python3
+"""Shared memory CLI for local LLM environments.
+
+Storage is split into two file-based layers (no SQLite):
+
+- Vault (``MarkdownMemoryStore``): stable ``memories``, synced across machines
+  via Syncthing (see ``LLM_MEMORY_VAULT``).
+- Local (``LocalPipelineStore``): ``sessions`` / ``events`` / ``observations``
+  and audit logs, kept per-machine and never synced (see
+  ``LLM_MEMORY_LOCAL_DIR``).
+"""
 from __future__ import annotations
 
 import argparse
 import json
 import os
-import sqlite3
 import sys
-import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from local_store import LocalPipelineStore, new_id, resolve_local_dir, utc_now
+from markdown_store import MarkdownMemoryStore, humanize_key, resolve_vault_dir
 
-DEFAULT_DB_PATH = Path(__file__).resolve().parent / "memory.db"
 EXTRACTOR_VERSION = "rule-based-v1"
-REPO_ROOT = Path(__file__).resolve().parent.parent
-SCHEMA_PATH = REPO_ROOT / "memory" / "llm-shared-memory-schema.sql"
 QUEUE_DIR = Path(
     os.environ.get(
         "LLM_MEMORY_QUEUE_DIR",
@@ -43,94 +50,31 @@ OS_PREFERENCES = {
 }
 
 
-def utc_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
-
-
 def parse_timestamp(value: str | None) -> datetime | None:
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value)
+        parsed = datetime.fromisoformat(value)
     except ValueError:
         return None
-
-
-def new_id(prefix: str) -> str:
-    return f"{prefix}_{uuid.uuid4().hex}"
+    # Memory frontmatter now stores date-only strings (e.g. "2026-08-01",
+    # see MarkdownMemoryStore.today_date()), which fromisoformat() parses as
+    # a naive datetime; treat those as UTC so recency_score() can compare
+    # them against an aware "now".
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
 
 @dataclass
 class ObservationCandidate:
-    memory_type: str
+    type: str
     entity_type: str
     entity_id: str
     attribute: str
     scope: str
     confidence: float
     value: dict[str, Any]
-
-
-def connect_readwrite(db_path: Path) -> sqlite3.Connection:
-    """Open a writable connection and run schema migrations."""
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    # /var/tmp/ は sandbox 環境でブロックされるため /tmp/ を使う（deprecated だが接続ごとに設定する唯一の方法）
-    conn.execute("PRAGMA temp_store_directory = '/tmp'")
-    conn.executescript(SCHEMA_PATH.read_text(encoding="utf-8"))
-    migrate_schema(conn)
-    ensure_search_index(conn)
-    return conn
-
-
-def connect_readonly(db_path: Path) -> sqlite3.Connection:
-    """Open a read-only connection. Raises FileNotFoundError if DB is absent."""
-    if not db_path.exists():
-        raise FileNotFoundError(f"DB not found: {db_path}")
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
-    conn.row_factory = sqlite3.Row
-    # /var/tmp/ は sandbox 環境でブロックされるため /tmp/ を使う（deprecated だが接続ごとに設定する唯一の方法）
-    conn.execute("PRAGMA temp_store_directory = '/tmp'")
-    return conn
-
-
-# Backward compatibility alias
-def connect(db_path: Path) -> sqlite3.Connection:
-    return connect_readwrite(db_path)
-
-
-def migrate_schema(conn: sqlite3.Connection) -> None:
-    conn.execute("DROP INDEX IF EXISTS idx_memories_active")
-    conn.execute(
-        """
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_active
-        ON memories(entity_type, entity_id, key, scope, COALESCE(project_id, ''))
-        WHERE status = 'active'
-        """
-    )
-    try:
-        conn.execute("ALTER TABLE sessions ADD COLUMN extracted_at TEXT")
-    except sqlite3.OperationalError:
-        pass  # カラム既存
-
-
-def ensure_search_index(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
-        USING fts5(memory_id UNINDEXED, key, summary, value_text)
-        """
-    )
-    conn.execute(
-        """
-        INSERT INTO memories_fts(memory_id, key, summary, value_text)
-        SELECT id, key, summary, value_json
-        FROM memories
-        WHERE status = 'active'
-          AND id NOT IN (SELECT memory_id FROM memories_fts)
-        """
-    )
 
 
 def print_json(payload: dict[str, Any]) -> None:
@@ -183,42 +127,23 @@ def recency_score(timestamp: str | None) -> float:
     return max(0.0, 1.0 - min(age_days / 180.0, 1.0))
 
 
-def ensure_session(
-    conn: sqlite3.Connection,
-    session_id: str,
-    client: str,
-    user_id: str,
-    project_id: str | None,
-) -> None:
-    row = conn.execute(
-        "SELECT id FROM sessions WHERE id = ?",
-        (session_id,),
-    ).fetchone()
-    if row:
-        return
-
-    conn.execute(
-        """
-        INSERT INTO sessions(id, client, user_id, project_id, started_at)
-        VALUES(?, ?, ?, ?, ?)
-        """,
-        (session_id, client, user_id, project_id, utc_now()),
-    )
-
-
 def cmd_init_db(args: argparse.Namespace) -> None:
-    connect(args.db).close()
-    print_json({"ok": True, "db": str(args.db)})
+    # Directory creation happens in the store constructors (see main()).
+    print_json(
+        {
+            "ok": True,
+            "db": str(args.db) if args.db else None,
+            "vault": str(args.markdown_store.vault_dir),
+            "local_dir": str(args.local_store.local_dir),
+        }
+    )
 
 
 def cmd_start_session(args: argparse.Namespace) -> None:
     session_id = args.session_id or new_id("sess")
-    conn = connect(args.db)
-    try:
-        ensure_session(conn, session_id, args.client, args.user_id, args.project_id)
-        conn.commit()
-    finally:
-        conn.close()
+    args.local_store.ensure_session(
+        session_id, client=args.client, user_id=args.user_id, project_id=args.project_id
+    )
     print_json(
         {
             "ok": True,
@@ -233,34 +158,23 @@ def cmd_start_session(args: argparse.Namespace) -> None:
 
 
 def cmd_append_event(args: argparse.Namespace) -> None:
-    event_id = args.event_id or new_id("evt")
-    conn = connect(args.db)
-    try:
-        ensure_session(conn, args.session_id, args.client, args.user_id, args.project_id)
-        conn.execute(
-            """
-            INSERT INTO events(id, session_id, role, kind, content, created_at, importance)
-            VALUES(?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                event_id,
-                args.session_id,
-                args.role,
-                args.kind,
-                args.content,
-                utc_now(),
-                args.importance,
-            ),
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    args.local_store.ensure_session(
+        args.session_id, client=args.client, user_id=args.user_id, project_id=args.project_id
+    )
+    event = args.local_store.append_event(
+        args.session_id,
+        role=args.role,
+        kind=args.kind,
+        content=args.content,
+        importance=args.importance,
+        event_id=args.event_id,
+    )
 
     print_json(
         {
             "ok": True,
             "event": {
-                "id": event_id,
+                "id": event["id"],
                 "session_id": args.session_id,
                 "role": args.role,
                 "kind": args.kind,
@@ -269,126 +183,47 @@ def cmd_append_event(args: argparse.Namespace) -> None:
     )
 
 
-def summarize_session(conn: sqlite3.Connection, session_id: str) -> str:
-    rows = conn.execute(
-        """
-        SELECT role, kind, content
-        FROM events
-        WHERE session_id = ?
-        ORDER BY created_at ASC
-        LIMIT 20
-        """,
-        (session_id,),
-    ).fetchall()
-    if not rows:
+def summarize_session(local_store: LocalPipelineStore, session_id: str) -> str:
+    events = sorted(local_store.iter_events(session_id), key=lambda e: e["created_at"])
+    if not events:
         return "空のセッション"
 
+    # Matches the legacy SQLite behaviour: the earliest 20 events are fetched,
+    # and only the last 5 of that window are used for the excerpt.
+    window = events[:20]
     parts: list[str] = []
-    for row in rows[-5:]:
-        content = row["content"]
+    for event in window[-5:]:
+        content = event["content"]
         if len(content) > 80:
             content = f"{content[:77]}..."
-        parts.append(f"{row['role']}:{row['kind']}={content}")
+        parts.append(f"{event['role']}:{event['kind']}={content}")
     return " / ".join(parts)
 
 
-def cmd_end_session(args: argparse.Namespace) -> None:
-    conn = connect(args.db)
-    try:
-        session = conn.execute(
-            "SELECT id, ended_at, user_id, project_id FROM sessions WHERE id = ?",
-            (args.session_id,),
-        ).fetchone()
-        if not session:
-            raise SystemExit(f"session not found: {args.session_id}")
-
-        summary = args.summary or summarize_session(conn, args.session_id)
-        now = utc_now()
-        conn.execute(
-            """
-            UPDATE sessions
-            SET ended_at = ?, summary = ?
-            WHERE id = ?
-            """,
-            (now, summary, args.session_id),
-        )
-        if args.append_summary_event:
-            conn.execute(
-                """
-                INSERT INTO events(id, session_id, role, kind, content, created_at, importance)
-                VALUES(?, ?, 'assistant', 'summary', ?, ?, ?)
-                """,
-                (new_id("evt"), args.session_id, summary, now, 0.9),
-            )
-        conn.commit()
-
-        extracted_count = 0
-        consolidated_count = 0
-        if args.extract:
-            events = iter_events_for_extraction(conn, args.session_id)
-            extracted_count = len(insert_observations_for_events(conn, events))
-
-        if args.consolidate:
-            # Only process observations generated from events in the current session.
-            # Processing all observations on every session end causes O(sessions × obs)
-            # growth and re-supersedes memories that were already settled.
-            rows = conn.execute(
-                """
-                SELECT o.*
-                FROM observations o
-                WHERE o.entity_id IN (?, ?)
-                  AND o.source_event_id IN (
-                    SELECT e.id FROM events e WHERE e.session_id = ?
-                  )
-                ORDER BY o.observed_at ASC
-                """,
-                (session["user_id"], session["project_id"] or "default", args.session_id),
-            ).fetchall()
-            for row in rows:
-                upsert_memory_from_observation(conn, row)
-                consolidated_count += 1
-
-        conn.commit()
-    finally:
-        conn.close()
-
-    print_json(
-        {
-            "ok": True,
-            "session_id": args.session_id,
-            "ended_at": now,
-            "summary": summary,
-            "extracted_count": extracted_count,
-            "consolidated_count": consolidated_count,
-        }
-    )
-
-
-def iter_events_for_extraction(conn: sqlite3.Connection, session_id: str | None) -> list[sqlite3.Row]:
+def iter_events_for_extraction(
+    local_store: LocalPipelineStore, session_id: str | None = None
+) -> list[dict[str, Any]]:
     if session_id:
-        rows = conn.execute(
-            """
-            SELECT e.*, s.user_id, s.project_id, s.client
-            FROM events e
-            JOIN sessions s ON s.id = e.session_id
-            WHERE e.session_id = ?
-            ORDER BY e.created_at ASC
-            """,
-            (session_id,),
-        ).fetchall()
+        sessions_by_id = {session_id: local_store.get_session(session_id)}
+        events = local_store.iter_events(session_id)
     else:
-        rows = conn.execute(
-            """
-            SELECT e.*, s.user_id, s.project_id, s.client
-            FROM events e
-            JOIN sessions s ON s.id = e.session_id
-            ORDER BY e.created_at ASC
-            """
-        ).fetchall()
-    return rows
+        sessions_by_id = {s["id"]: s for s in local_store.list_sessions()}
+        events = local_store.iter_all_events()
+
+    enriched: list[dict[str, Any]] = []
+    for event in events:
+        session = sessions_by_id.get(event["session_id"])
+        record = dict(event)
+        record["user_id"] = session["user_id"] if session else None
+        record["project_id"] = session.get("project_id") if session else None
+        record["client"] = session["client"] if session else None
+        enriched.append(record)
+
+    enriched.sort(key=lambda e: e["created_at"])
+    return enriched
 
 
-def build_candidates(event: sqlite3.Row) -> list[ObservationCandidate]:
+def build_candidates(event: dict[str, Any]) -> list[ObservationCandidate]:
     content = event["content"]
     lowered = content.lower()
     candidates: list[ObservationCandidate] = []
@@ -397,7 +232,7 @@ def build_candidates(event: sqlite3.Row) -> list[ObservationCandidate]:
         if "日本語" in content:
             candidates.append(
                 ObservationCandidate(
-                    memory_type="procedural",
+                    type="feedback",
                     entity_type="user",
                     entity_id=event["user_id"],
                     attribute="response_language",
@@ -414,7 +249,7 @@ def build_candidates(event: sqlite3.Row) -> list[ObservationCandidate]:
         if "english" in lowered or "英語" in content:
             candidates.append(
                 ObservationCandidate(
-                    memory_type="procedural",
+                    type="feedback",
                     entity_type="user",
                     entity_id=event["user_id"],
                     attribute="response_language",
@@ -432,7 +267,7 @@ def build_candidates(event: sqlite3.Row) -> list[ObservationCandidate]:
             if token in lowered:
                 candidates.append(
                     ObservationCandidate(
-                        memory_type="semantic",
+                        type="profile",
                         entity_type="user",
                         entity_id=event["user_id"],
                         attribute="preferred_language_runtime",
@@ -451,7 +286,7 @@ def build_candidates(event: sqlite3.Row) -> list[ObservationCandidate]:
             if token in lowered:
                 candidates.append(
                     ObservationCandidate(
-                        memory_type="semantic",
+                        type="profile",
                         entity_type="user",
                         entity_id=event["user_id"],
                         attribute="preferred_editor",
@@ -470,7 +305,7 @@ def build_candidates(event: sqlite3.Row) -> list[ObservationCandidate]:
             if token in lowered:
                 candidates.append(
                     ObservationCandidate(
-                        memory_type="semantic",
+                        type="profile",
                         entity_type="user",
                         entity_id=event["user_id"],
                         attribute="primary_os",
@@ -494,7 +329,7 @@ def build_candidates(event: sqlite3.Row) -> list[ObservationCandidate]:
         command_text = parsed["command"] if isinstance(parsed, dict) and "command" in parsed else content
         candidates.append(
             ObservationCandidate(
-                memory_type="episodic",
+                type="reference",
                 entity_type="project",
                 entity_id=event["project_id"] or "default",
                 attribute="recent_command",
@@ -505,63 +340,39 @@ def build_candidates(event: sqlite3.Row) -> list[ObservationCandidate]:
         )
 
     # NOTE: kind=summary events are NOT converted to recent_summary observations.
-    # Session summaries are already stored in the events table (kind=summary) and
-    # accessible via the history command. Promoting them to memory caused unbounded
-    # growth because the summary text changes every session, defeating deduplication.
+    # Session summaries are already stored per-session and accessible via the
+    # history command. Promoting them to memory caused unbounded growth because
+    # the summary text changes every session, defeating deduplication.
 
     return candidates
 
 
 def insert_observations_for_events(
-    conn: sqlite3.Connection, events: list[sqlite3.Row]
+    local_store: LocalPipelineStore, events: list[dict[str, Any]]
 ) -> list[str]:
     inserted: list[str] = []
     for event in events:
         for candidate in build_candidates(event):
-            observation_id = new_id("obs")
-            try:
-                conn.execute(
-                    """
-                    INSERT INTO observations(
-                        id, source_event_id, entity_type, entity_id, attribute,
-                        value_json, confidence, scope, observed_at, extractor_version
-                    )
-                    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        observation_id,
-                        event["id"],
-                        candidate.entity_type,
-                        candidate.entity_id,
-                        candidate.attribute,
-                        json.dumps(
-                            {
-                                "memory_type": candidate.memory_type,
-                                **candidate.value,
-                            },
-                            ensure_ascii=False,
-                        ),
-                        candidate.confidence,
-                        candidate.scope,
-                        utc_now(),
-                        EXTRACTOR_VERSION,
-                    ),
-                )
-            except sqlite3.IntegrityError:
-                continue
-            inserted.append(observation_id)
+            value = {"type": candidate.type, **candidate.value}
+            observation = local_store.append_observation(
+                session_id=event["session_id"],
+                source_event_id=event["id"],
+                entity_type=candidate.entity_type,
+                entity_id=candidate.entity_id,
+                attribute=candidate.attribute,
+                value=value,
+                confidence=candidate.confidence,
+                scope=candidate.scope,
+                extractor_version=EXTRACTOR_VERSION,
+            )
+            if observation is not None:
+                inserted.append(observation["id"])
     return inserted
 
 
 def cmd_extract(args: argparse.Namespace) -> None:
-    conn = connect(args.db)
-    try:
-        events = iter_events_for_extraction(conn, args.session_id)
-        inserted = insert_observations_for_events(conn, events)
-        conn.commit()
-    finally:
-        conn.close()
-
+    events = iter_events_for_extraction(args.local_store, args.session_id)
+    inserted = insert_observations_for_events(args.local_store, events)
     print_json({"ok": True, "inserted_observation_ids": inserted, "count": len(inserted)})
 
 
@@ -584,444 +395,303 @@ def summarize_memory(key: str, value: dict[str, Any]) -> str:
     return f"{key}: {raw_value}"
 
 
-def upsert_memory_from_observation(conn: sqlite3.Connection, row: sqlite3.Row) -> str:
-    value = json.loads(row["value_json"])
-    memory_type = value.get("memory_type", "semantic")
-    project_id = row["entity_id"] if row["scope"] == "project" and row["entity_type"] == "project" else None
-    existing_rows = conn.execute(
-        """
-        SELECT * FROM memories
-        WHERE entity_type = ?
-          AND entity_id = ?
-          AND key = ?
-          AND scope = ?
-          AND COALESCE(project_id, '') = COALESCE(?, '')
-          AND status = 'active'
-        ORDER BY updated_at DESC, created_at DESC
-        """,
-        (row["entity_type"], row["entity_id"], row["attribute"], row["scope"], project_id),
-    ).fetchall()
+def resolve_effective_project_id(
+    *, scope: str, project_id: str | None, entity_type: str, entity_id: str
+) -> str | None:
+    """Resolve the ``project_id`` that ``upsert_from_observation`` will actually use.
 
-    now = utc_now()
-    summary = summarize_memory(row["attribute"], value)
-    matching_existing = next(
-        (existing for existing in existing_rows if existing["value_json"] == row["value_json"]),
-        None,
+    The explicit ``project_id`` (see ``LocalPipelineStore.append_observation``)
+    takes priority; it covers the ``write-memory`` CLI path, where
+    ``entity_type`` stays "user" and the project can't be recovered from
+    ``entity_id``. Falling back to deriving it from ``entity_id`` preserves
+    the pipeline-extracted path (``build_candidates``' ``entity_type="project"``
+    observations), which never sets it explicitly.
+    """
+    if project_id is None and scope == "project" and entity_type == "project":
+        return entity_id
+    return project_id
+
+
+def upsert_memory_from_observation(
+    markdown_store: MarkdownMemoryStore, observation: dict[str, Any]
+) -> str:
+    """Consolidate a pipeline ``observation`` into the Vault.
+
+    The observation layer keeps its own richer schema (confidence, evidence,
+    session/event provenance) unchanged -- see ``llm-shared-memory-design.md``.
+    Only the ``type`` classification and the rendered ``summary`` prose cross
+    over into the Vault's minimal frontmatter/body; confidence-based scoring
+    and source provenance are deliberately not carried into the curated
+    Vault record (see ``MarkdownMemoryStore``'s module docstring).
+    """
+    value = observation["value"]
+    record_type = value.get("type", "profile")
+    project_id = resolve_effective_project_id(
+        scope=observation["scope"],
+        project_id=observation.get("project_id"),
+        entity_type=observation["entity_type"],
+        entity_id=observation["entity_id"],
     )
+    summary = summarize_memory(observation["attribute"], value)
 
-    if matching_existing:
-        new_confidence = min(1.0, max(matching_existing["confidence"], row["confidence"]) + 0.05)
-        new_salience = min(1.0, max(matching_existing["salience"], row["confidence"]))
-        conn.execute(
-            """
-            UPDATE memories
-            SET confidence = ?, salience = ?, summary = ?, updated_at = ?
-            WHERE id = ?
-            """,
-            (new_confidence, new_salience, summary, now, matching_existing["id"]),
+    record = markdown_store.upsert_from_observation(
+        type=record_type,
+        entity_type=observation["entity_type"],
+        entity_id=observation["entity_id"],
+        key=observation["attribute"],
+        scope=observation["scope"],
+        project_id=project_id,
+        summary=summary,
+    )
+    return record["id"]
+
+
+def safe_upsert_memory_from_observation(
+    markdown_store: MarkdownMemoryStore, observation: dict[str, Any]
+) -> str | None:
+    """Consolidate one ``observation`` into the Vault, skipping poisoned records.
+
+    A malformed observation (e.g. ``scope="project"`` with no resolvable
+    ``project_id``) must not abort a batch consolidation that also contains
+    valid observations for other entities -- see ``cmd_consolidate``,
+    ``cmd_end_session`` and ``_flush_one_queue_item``. Such an observation is
+    skipped with a warning on stderr instead of raising.
+    """
+    try:
+        return upsert_memory_from_observation(markdown_store, observation)
+    except ValueError as exc:
+        print(
+            f"warning: skipping observation {observation.get('id')!r}: {exc}",
+            file=sys.stderr,
         )
-        memory_id = matching_existing["id"]
-        duplicate_ids = [
-            existing["id"]
-            for existing in existing_rows
-            if existing["id"] != matching_existing["id"]
-        ]
-        if duplicate_ids:
-            placeholders = ", ".join("?" for _ in duplicate_ids)
-            conn.execute(
-                f"""
-                UPDATE memories
-                SET status = 'superseded', valid_until = ?, updated_at = ?
-                WHERE id IN ({placeholders})
-                """,
-                (now, now, *duplicate_ids),
-            )
-            conn.executemany(
-                "DELETE FROM memories_fts WHERE memory_id = ?",
-                [(memory_id_to_delete,) for memory_id_to_delete in duplicate_ids],
-            )
-    else:
-        if existing_rows:
-            existing_ids = [existing["id"] for existing in existing_rows]
-            placeholders = ", ".join("?" for _ in existing_ids)
-            conn.execute(
-                f"""
-                UPDATE memories
-                SET status = 'superseded', valid_until = ?, updated_at = ?
-                WHERE id IN ({placeholders})
-                """,
-                (now, now, *existing_ids),
-            )
-            conn.executemany(
-                "DELETE FROM memories_fts WHERE memory_id = ?",
-                [(memory_id_to_delete,) for memory_id_to_delete in existing_ids],
-            )
-        memory_id = new_id("mem")
-        conn.execute(
-            """
-            INSERT INTO memories(
-                id, memory_type, entity_type, entity_id, key, value_json, summary,
-                confidence, salience, scope, project_id, status, valid_from,
-                valid_until, created_at, updated_at
-            )
-            VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, NULL, ?, ?)
-            """,
-            (
-                memory_id,
-                memory_type,
-                row["entity_type"],
-                row["entity_id"],
-                row["attribute"],
-                row["value_json"],
-                summary,
-                row["confidence"],
-                row["confidence"],
-                row["scope"],
-                project_id,
-                now,
-                now,
-                now,
-            ),
-        )
-    conn.execute("DELETE FROM memories_fts WHERE memory_id = ?", (memory_id,))
-    conn.execute(
-        """
-        INSERT INTO memories_fts(memory_id, key, summary, value_text)
-        VALUES(?, ?, ?, ?)
-        """,
-        (memory_id, row["attribute"], summary, row["value_json"]),
-    )
-
-    conn.execute(
-        """
-        INSERT OR REPLACE INTO memory_sources(memory_id, observation_id, weight)
-        VALUES(?, ?, ?)
-        """,
-        (memory_id, row["id"], row["confidence"]),
-    )
-    return memory_id
-
-
-def fetch_unextracted_sessions(conn: sqlite3.Connection, limit: int = 10) -> list[sqlite3.Row]:
-    return conn.execute(
-        """SELECT * FROM sessions
-           WHERE extracted_at IS NULL AND summary IS NOT NULL
-           ORDER BY started_at ASC LIMIT ?""",
-        (limit,),
-    ).fetchall()
-
-
-def fetch_active_memories_summary(conn: sqlite3.Connection) -> str:
-    rows = conn.execute(
-        "SELECT key, summary FROM memories WHERE status = 'active' ORDER BY updated_at DESC"
-    ).fetchall()
-    lines = [f"{row['key']}: {row['summary']}" for row in rows]
-    return "\n".join(lines)
+        return None
 
 
 def cmd_list_unextracted(args: argparse.Namespace) -> None:
-    conn = connect(args.db)
-    try:
-        sessions = fetch_unextracted_sessions(conn, args.limit)
-        results = []
-        for s in sessions:
-            results.append({
-                "id": s["id"],
-                "project_id": s["project_id"],
-                "started_at": s["started_at"],
-                "ended_at": s["ended_at"],
-                "summary": s["summary"],
-            })
-        print_json({"ok": True, "sessions": results, "count": len(results)})
-    finally:
-        conn.close()
+    sessions = args.local_store.list_unextracted(args.limit)
+    results = [
+        {
+            "id": s["id"],
+            "project_id": s.get("project_id"),
+            "started_at": s["started_at"],
+            "ended_at": s.get("ended_at"),
+            "summary": s.get("summary"),
+        }
+        for s in sessions
+    ]
+    print_json({"ok": True, "sessions": results, "count": len(results)})
 
 
 def cmd_write_memory(args: argparse.Namespace) -> None:
-    conn = connect(args.db)
-    try:
-        session_id = args.session_id
-        now = utc_now()
-
-        # 仮想イベントを events に挿入（FK 制約対応）
-        event_id = new_id("evt")
-        conn.execute(
-            """INSERT INTO events(id, session_id, role, kind, content, created_at, importance)
-               VALUES(?, ?, 'system', 'llm-extract-source', ?, ?, 0.9)""",
-            (event_id, session_id, json.dumps({
-                "key": args.key,
-                "summary": args.summary,
-                "memory_type": args.memory_type,
-            }, ensure_ascii=False), now),
+    # Validate before any local-store writes: a scope="project" call that
+    # can't resolve a project_id must fail fast without leaving behind an
+    # event/observation record, otherwise a poisoned observation lingers in
+    # the local store and later aborts batch consolidation (see
+    # ``safe_upsert_memory_from_observation``).
+    effective_project_id = resolve_effective_project_id(
+        scope=args.scope,
+        project_id=args.project_id,
+        entity_type=args.entity_type,
+        entity_id=args.entity_id,
+    )
+    if args.scope == "project" and not effective_project_id:
+        raise SystemExit(
+            f"scope='project' requires a project_id (key={args.key!r}); refusing to "
+            "silently write a global-scope file instead"
         )
 
-        # observation を挿入
-        obs_id = new_id("obs")
-        value_json = json.dumps({
-            "memory_type": args.memory_type,
-            "value": args.summary,
-            "source": "claude_code_extract",
-        }, ensure_ascii=False)
-        conn.execute(
-            """INSERT INTO observations(id, source_event_id, entity_type, entity_id,
-               attribute, value_json, confidence, scope, observed_at, extractor_version)
-               VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 'claude-code-v1')""",
-            (obs_id, event_id, args.entity_type, args.entity_id,
-             args.key, value_json, args.confidence, args.scope, now),
-        )
+    event = args.local_store.append_event(
+        args.session_id,
+        role="system",
+        kind="llm-extract-source",
+        content=json.dumps(
+            {"key": args.key, "summary": args.summary, "type": args.memory_type},
+            ensure_ascii=False,
+        ),
+        importance=0.9,
+    )
 
-        # consolidate（upsert_memory_from_observation）
-        obs_row = conn.execute("SELECT * FROM observations WHERE id = ?", (obs_id,)).fetchone()
-        upsert_memory_from_observation(conn, obs_row)
+    value = {"type": args.memory_type, "value": args.summary, "source": "claude_code_extract"}
+    observation = args.local_store.append_observation(
+        session_id=args.session_id,
+        source_event_id=event["id"],
+        entity_type=args.entity_type,
+        entity_id=args.entity_id,
+        attribute=args.key,
+        value=value,
+        confidence=args.confidence,
+        scope=args.scope,
+        project_id=args.project_id,
+        extractor_version="claude-code-v1",
+    )
 
-        conn.commit()
-        print_json({"ok": True, "observation_id": obs_id, "event_id": event_id})
-    finally:
-        conn.close()
+    upsert_memory_from_observation(args.markdown_store, observation)
+
+    print_json({"ok": True, "observation_id": observation["id"], "event_id": event["id"]})
 
 
 def cmd_mark_extracted(args: argparse.Namespace) -> None:
-    conn = connect(args.db)
-    try:
-        now = utc_now()
-        updated = conn.execute(
-            "UPDATE sessions SET extracted_at = ? WHERE id = ? AND extracted_at IS NULL",
-            (now, args.session_id),
-        ).rowcount
-        conn.commit()
-        print_json({"ok": True, "updated": updated})
-    finally:
-        conn.close()
+    updated = args.local_store.mark_extracted(args.session_id)
+    print_json({"ok": True, "updated": updated})
 
 
-def cmd_cleanup(args: argparse.Namespace) -> None:
-    """Clean up stale data: remove recent_summary and deduplicate superseded memories.
+def cmd_end_session(args: argparse.Namespace) -> None:
+    session = args.local_store.get_session(args.session_id)
+    if not session:
+        raise SystemExit(f"session not found: {args.session_id}")
 
-    1. Remove all recent_summary memories/observations (no longer generated).
-    2. For each key, keep only the most recent superseded memory per distinct value_json,
-       removing older duplicates.
-    """
-    conn = connect(args.db)
-    try:
-        # --- Phase 1: recent_summary の全削除 ---
-        summary_ids = [
-            row[0]
-            for row in conn.execute(
-                "SELECT id FROM memories WHERE key = 'recent_summary'"
-            ).fetchall()
-        ]
-        if summary_ids:
-            ph = ", ".join("?" for _ in summary_ids)
-            conn.execute(f"DELETE FROM memory_sources WHERE memory_id IN ({ph})", summary_ids)
-            conn.execute(f"DELETE FROM memories_fts WHERE memory_id IN ({ph})", summary_ids)
+    summary = args.summary or summarize_session(args.local_store, args.session_id)
+    now = utc_now()
+    args.local_store.update_session(args.session_id, ended_at=now, summary=summary)
 
-        deleted_summary = conn.execute(
-            "DELETE FROM memories WHERE key = 'recent_summary'"
-        ).rowcount
+    if args.append_summary_event:
+        args.local_store.append_event(
+            args.session_id, role="assistant", kind="summary", content=summary, importance=0.9
+        )
 
-        deleted_observations = conn.execute(
-            "DELETE FROM observations WHERE attribute = 'recent_summary'"
-        ).rowcount
+    extracted_count = 0
+    if args.extract:
+        events = iter_events_for_extraction(args.local_store, args.session_id)
+        extracted_count = len(insert_observations_for_events(args.local_store, events))
 
-        # --- Phase 2: superseded の重複削除 ---
-        # 同じ (key, entity_id, value_json) の superseded が複数あれば最新1件だけ残す
-        dup_ids = [
-            row[0]
-            for row in conn.execute(
-                """
-                SELECT m.id FROM memories m
-                WHERE m.status = 'superseded'
-                  AND m.id NOT IN (
-                    SELECT id FROM (
-                      SELECT id, ROW_NUMBER() OVER (
-                        PARTITION BY key, entity_id, value_json
-                        ORDER BY updated_at DESC
-                      ) AS rn
-                      FROM memories
-                      WHERE status = 'superseded'
-                    ) WHERE rn = 1
-                  )
-                """
-            ).fetchall()
-        ]
-        if dup_ids:
-            ph = ", ".join("?" for _ in dup_ids)
-            conn.execute(f"DELETE FROM memory_sources WHERE memory_id IN ({ph})", dup_ids)
-            conn.execute(f"DELETE FROM memories_fts WHERE memory_id IN ({ph})", dup_ids)
-            conn.execute(f"DELETE FROM memories WHERE id IN ({ph})", dup_ids)
-        deleted_duplicates = len(dup_ids)
-
-        conn.commit()
-    finally:
-        conn.close()
+    consolidated_count = 0
+    if args.consolidate:
+        observations = sorted(
+            args.local_store.iter_observations(args.session_id), key=lambda o: o["observed_at"]
+        )
+        for observation in observations:
+            if safe_upsert_memory_from_observation(args.markdown_store, observation) is not None:
+                consolidated_count += 1
 
     print_json(
         {
             "ok": True,
-            "deleted_summary_memories": deleted_summary,
-            "deleted_summary_observations": deleted_observations,
-            "deleted_duplicate_superseded": deleted_duplicates,
+            "session_id": args.session_id,
+            "ended_at": now,
+            "summary": summary,
+            "extracted_count": extracted_count,
+            "consolidated_count": consolidated_count,
         }
     )
 
 
 def cmd_consolidate(args: argparse.Namespace) -> None:
-    conn = connect(args.db)
-    memory_ids: list[str] = []
-    try:
-        params: list[Any] = []
-        conditions = ["1 = 1"]
-        if args.entity_id:
-            conditions.append("o.entity_id = ?")
-            params.append(args.entity_id)
-        if args.attribute:
-            conditions.append("o.attribute = ?")
-            params.append(args.attribute)
+    observations = sorted(
+        args.local_store.iter_all_observations(), key=lambda o: o["observed_at"]
+    )
+    if args.entity_id:
+        observations = [o for o in observations if o["entity_id"] == args.entity_id]
+    if args.attribute:
+        observations = [o for o in observations if o["attribute"] == args.attribute]
 
-        rows = conn.execute(
-            f"""
-            SELECT o.*
-            FROM observations o
-            WHERE {' AND '.join(conditions)}
-            ORDER BY o.observed_at ASC
-            """,
-            params,
-        ).fetchall()
-        for row in rows:
-            memory_ids.append(upsert_memory_from_observation(conn, row))
-        conn.commit()
-    finally:
-        conn.close()
-
+    memory_ids = [
+        memory_id
+        for memory_id in (
+            safe_upsert_memory_from_observation(args.markdown_store, o) for o in observations
+        )
+        if memory_id is not None
+    ]
     print_json({"ok": True, "memory_ids": memory_ids, "count": len(memory_ids)})
 
 
-def score_memory(row: sqlite3.Row, query: str | None) -> float:
-    score = row["confidence"] * 0.6 + row["salience"] * 0.4
+def score_memory(record: dict[str, Any], query: str | None) -> float:
+    """Rank by recency plus query match.
+
+    There is no confidence/salience score left to blend in here: curation
+    already happened when the memory was written (see
+    ``llm-shared-memory-design.md``), so retrieval trusts that judgment
+    rather than re-deriving a score from stored numbers.
+    """
+    score = recency_score(record["updated"])
     if query:
-        haystack = f"{row['key']} {row['summary']} {row['value_json']}".lower()
+        haystack = f"{record['title']} {record['summary']}".lower()
         for token in query.lower().split():
             if token in haystack:
                 score += 0.2
     return score
 
 
-def serialize_memory(row: sqlite3.Row) -> dict[str, Any]:
+def serialize_memory(record: dict[str, Any]) -> dict[str, Any]:
     return {
-        "id": row["id"],
-        "memory_type": row["memory_type"],
-        "entity_type": row["entity_type"],
-        "entity_id": row["entity_id"],
-        "key": row["key"],
-        "value": json.loads(row["value_json"]),
-        "summary": row["summary"],
-        "confidence": row["confidence"],
-        "salience": row["salience"],
-        "scope": row["scope"],
-        "project_id": row["project_id"],
-        "updated_at": row["updated_at"],
+        "id": record["id"],
+        "type": record["type"],
+        "title": record["title"],
+        "summary": record["summary"],
+        "scope": record["scope"],
+        "project_id": record.get("project_id"),
+        "entity_id": record.get("entity_id"),
+        "updated": record["updated"],
     }
 
 
-def score_history_memory(row: sqlite3.Row, query: str | None) -> float:
-    match_score = text_match_score(
-        [row["key"], row["summary"], row["value_json"]],
-        query,
-    )
-    status_penalty = 0.0 if row["status"] == "active" else 0.15
-    return (
-        row["confidence"] * 0.35
-        + row["salience"] * 0.2
-        + recency_score(row["updated_at"]) * 0.2
-        + min(match_score, 6.0) * 0.25
-        - status_penalty
-    )
+def score_history_memory(row: dict[str, Any], query: str | None) -> float:
+    match_score = text_match_score([row["title"], row["summary"]], query)
+    return recency_score(row["updated"]) * 0.6 + min(match_score, 6.0) * 0.4
 
 
-def serialize_history_memory(row: sqlite3.Row, query: str | None) -> dict[str, Any]:
-    value = json.loads(row["value_json"])
-    combined_text = " ".join(
-        [
-            row["summary"],
-            row["value_json"],
-            row["source_summary"] or "",
-            row["source_excerpt"] or "",
-        ]
-    )
+def serialize_history_memory(row: dict[str, Any], query: str | None) -> dict[str, Any]:
+    combined_text = " ".join([row["title"], row["summary"]])
     return {
         "kind": "memory",
         "id": row["id"],
-        "memory_type": row["memory_type"],
-        "status": row["status"],
-        "entity_type": row["entity_type"],
-        "entity_id": row["entity_id"],
-        "key": row["key"],
+        "type": row["type"],
+        "scope": row["scope"],
+        "title": row["title"],
         "summary": row["summary"],
-        "value": value,
-        "project_id": row["project_id"],
-        "updated_at": row["updated_at"],
-        "source_session_id": row["source_session_id"],
-        "source_event_id": row["source_event_id"],
-        "source_summary": row["source_summary"],
+        "project_id": row.get("project_id"),
+        "entity_id": row.get("entity_id"),
+        "updated": row["updated"],
+        "history": row.get("history", []),
         "excerpt": make_excerpt(combined_text, query),
     }
 
 
-def history_memory_match_score(row: sqlite3.Row, query: str | None) -> float:
+def history_memory_match_score(row: dict[str, Any], query: str | None) -> float:
+    return text_match_score([row["title"], row["summary"]], query)
+
+
+def history_session_match_score(row: dict[str, Any], query: str | None) -> float:
     return text_match_score(
-        [
-            row["key"],
-            row["summary"],
-            row["value_json"],
-            row["source_summary"] or "",
-            row["source_excerpt"] or "",
-        ],
+        [row.get("summary") or "", row.get("matched_event_content") or ""],
         query,
     )
 
 
-def history_session_match_score(row: sqlite3.Row, query: str | None) -> float:
-    return text_match_score(
-        [row["summary"] or "", row["matched_event_content"] or ""],
-        query,
-    )
-
-
-def score_history_session(row: sqlite3.Row, query: str | None) -> float:
+def score_history_session(row: dict[str, Any], query: str | None) -> float:
     match_score = history_session_match_score(row, query)
     event_bonus = min(float(row["matched_event_count"]), 5.0) * 0.08
     return recency_score(row["started_at"]) * 0.45 + min(match_score, 6.0) * 0.4 + event_bonus
 
 
-def serialize_history_session(row: sqlite3.Row, query: str | None) -> dict[str, Any]:
-    summary = row["summary"] or "summary unavailable"
-    excerpt_source = row["matched_event_content"] or summary
+def serialize_history_session(row: dict[str, Any], query: str | None) -> dict[str, Any]:
+    summary = row.get("summary") or "summary unavailable"
+    excerpt_source = row.get("matched_event_content") or summary
     return {
         "kind": "session",
         "id": row["id"],
         "client": row["client"],
         "user_id": row["user_id"],
-        "project_id": row["project_id"],
+        "project_id": row.get("project_id"),
         "started_at": row["started_at"],
-        "ended_at": row["ended_at"],
+        "ended_at": row.get("ended_at"),
         "summary": summary,
         "matched_event_count": row["matched_event_count"],
         "excerpt": make_excerpt(excerpt_source, query),
     }
 
 
-def score_history_event(row: sqlite3.Row, query: str | None) -> float:
+def score_history_event(row: dict[str, Any], query: str | None) -> float:
     match_score = history_event_match_score(row, query)
     importance = min(max(float(row["importance"]), 0.0), 1.0)
     return importance * 0.35 + recency_score(row["created_at"]) * 0.25 + min(match_score, 6.0) * 0.4
 
 
-def serialize_history_event(row: sqlite3.Row, query: str | None) -> dict[str, Any]:
+def serialize_history_event(row: dict[str, Any], query: str | None) -> dict[str, Any]:
     return {
         "kind": "event",
         "id": row["id"],
         "session_id": row["session_id"],
-        "project_id": row["project_id"],
+        "project_id": row.get("project_id"),
         "role": row["role"],
         "kind_name": row["kind"],
         "created_at": row["created_at"],
@@ -1030,17 +700,17 @@ def serialize_history_event(row: sqlite3.Row, query: str | None) -> dict[str, An
     }
 
 
-def history_event_match_score(row: sqlite3.Row, query: str | None) -> float:
+def history_event_match_score(row: dict[str, Any], query: str | None) -> float:
     return text_match_score([row["content"]], query)
 
 
 def dedupe_ranked_rows(
-    rows: list[sqlite3.Row],
+    rows: list[dict[str, Any]],
     key_name: str,
     scorer: Any,
     query: str | None,
-) -> list[sqlite3.Row]:
-    best_by_id: dict[str, tuple[float, sqlite3.Row]] = {}
+) -> list[dict[str, Any]]:
+    best_by_id: dict[str, tuple[float, dict[str, Any]]] = {}
     for row in rows:
         score = scorer(row, query)
         if query and score <= 0:
@@ -1052,153 +722,104 @@ def dedupe_ranked_rows(
     return [item[1] for item in sorted(best_by_id.values(), key=lambda item: item[0], reverse=True)]
 
 
+def _history_memory_rows(
+    markdown_store: MarkdownMemoryStore,
+    project_id: str | None,
+    entity_id: str | None,
+    memory_type: str | None,
+) -> list[dict[str, Any]]:
+    """Return memory records matching the given filters.
+
+    Earlier revisions joined each memory against the pipeline layer's
+    session/event that produced it (``sources``). Frontmatter no longer
+    tracks that provenance (see ``MarkdownMemoryStore``'s module docstring),
+    so this is now a direct filter over the Vault with no pipeline lookups.
+    """
+    records = markdown_store.iter_all()
+    if project_id:
+        records = [r for r in records if r.get("project_id") == project_id]
+    if entity_id:
+        records = [r for r in records if r.get("entity_id") == entity_id]
+    if memory_type:
+        records = [r for r in records if r["type"] == memory_type]
+    return records
+
+
 def cmd_history(args: argparse.Namespace) -> None:
-    conn = connect(args.db)
-    try:
-        query = args.query.strip() if args.query else None
-        memory_hits: list[dict[str, Any]] = []
-        session_hits: list[dict[str, Any]] = []
-        event_hits: list[dict[str, Any]] = []
-        returned_memory_ids: list[str] = []
+    local_store: LocalPipelineStore = args.local_store
+    markdown_store: MarkdownMemoryStore = args.markdown_store
+    query = args.query.strip() if args.query else None
+    memory_hits: list[dict[str, Any]] = []
+    session_hits: list[dict[str, Any]] = []
+    event_hits: list[dict[str, Any]] = []
+    returned_memory_ids: list[str] = []
 
-        if args.include_memories:
-            memory_conditions = ["m.status != 'deleted'"]
-            memory_params: list[Any] = []
-            if args.project_id:
-                memory_conditions.append("m.project_id = ?")
-                memory_params.append(args.project_id)
-            if args.entity_id:
-                memory_conditions.append("m.entity_id = ?")
-                memory_params.append(args.entity_id)
-            if args.memory_type:
-                memory_conditions.append("m.memory_type = ?")
-                memory_params.append(args.memory_type)
+    if args.include_memories:
+        memory_rows = _history_memory_rows(
+            markdown_store, args.project_id, args.entity_id, args.memory_type
+        )
+        ranked_memories = dedupe_ranked_rows(
+            [row for row in memory_rows if not query or history_memory_match_score(row, query) > 0],
+            "id",
+            score_history_memory,
+            query,
+        )[: args.limit]
+        memory_hits = [serialize_history_memory(row, query) for row in ranked_memories]
+        returned_memory_ids.extend(hit["id"] for hit in memory_hits)
 
-            memory_rows = conn.execute(
-                f"""
-                SELECT
-                    m.*,
-                    e.id AS source_event_id,
-                    e.session_id AS source_session_id,
-                    e.content AS source_excerpt,
-                    s.summary AS source_summary
-                FROM memories m
-                LEFT JOIN memory_sources ms ON ms.memory_id = m.id
-                LEFT JOIN observations o ON o.id = ms.observation_id
-                LEFT JOIN events e ON e.id = o.source_event_id
-                LEFT JOIN sessions s ON s.id = e.session_id
-                WHERE {' AND '.join(memory_conditions)}
-                ORDER BY m.updated_at DESC
-                """,
-                memory_params,
-            ).fetchall()
+    if args.include_sessions:
+        session_rows = []
+        for session in local_store.list_sessions():
+            if args.project_id and session.get("project_id") != args.project_id:
+                continue
+            if args.user_id and session.get("user_id") != args.user_id:
+                continue
+            events = local_store.iter_events(session["id"])
+            row = dict(session)
+            row["matched_event_count"] = len(events)
+            row["matched_event_content"] = " || ".join(e["content"] for e in events)
+            session_rows.append(row)
 
-            ranked_memories = dedupe_ranked_rows(
-                [
-                    row
-                    for row in memory_rows
-                    if not query or history_memory_match_score(row, query) > 0
-                ],
-                "id",
-                score_history_memory,
-                query,
-            )[: args.limit]
-            memory_hits = [serialize_history_memory(row, query) for row in ranked_memories]
-            returned_memory_ids.extend(hit["id"] for hit in memory_hits)
+        ranked_sessions = sorted(
+            [
+                row
+                for row in session_rows
+                if not query or history_session_match_score(row, query) > 0
+            ],
+            key=lambda row: score_history_session(row, query),
+            reverse=True,
+        )[: args.limit]
+        session_hits = [serialize_history_session(row, query) for row in ranked_sessions]
 
-        if args.include_sessions:
-            session_conditions = ["1 = 1"]
-            session_params: list[Any] = []
-            if args.project_id:
-                session_conditions.append("s.project_id = ?")
-                session_params.append(args.project_id)
-            if args.user_id:
-                session_conditions.append("s.user_id = ?")
-                session_params.append(args.user_id)
+    if args.include_events:
+        event_rows = []
+        for session in local_store.list_sessions():
+            if args.project_id and session.get("project_id") != args.project_id:
+                continue
+            if args.user_id and session.get("user_id") != args.user_id:
+                continue
+            if args.entity_id and session.get("user_id") != args.entity_id:
+                continue
+            for event in local_store.iter_events(session["id"]):
+                if args.role and event["role"] != args.role:
+                    continue
+                if args.kind and event["kind"] != args.kind:
+                    continue
+                row = dict(event)
+                row["project_id"] = session.get("project_id")
+                event_rows.append(row)
 
-            session_rows = conn.execute(
-                f"""
-                SELECT
-                    s.*,
-                    COUNT(e.id) AS matched_event_count,
-                    GROUP_CONCAT(e.content, ' || ') AS matched_event_content
-                FROM sessions s
-                LEFT JOIN events e ON e.session_id = s.id
-                WHERE {' AND '.join(session_conditions)}
-                GROUP BY s.id
-                ORDER BY s.started_at DESC
-                """,
-                session_params,
-            ).fetchall()
+        ranked_events = sorted(
+            [row for row in event_rows if not query or history_event_match_score(row, query) > 0],
+            key=lambda row: score_history_event(row, query),
+            reverse=True,
+        )[: args.limit]
+        event_hits = [serialize_history_event(row, query) for row in ranked_events]
 
-            ranked_sessions = sorted(
-                [
-                    row
-                    for row in session_rows
-                    if not query or history_session_match_score(row, query) > 0
-                ],
-                key=lambda row: score_history_session(row, query),
-                reverse=True,
-            )[: args.limit]
-            session_hits = [serialize_history_session(row, query) for row in ranked_sessions]
-
-        if args.include_events:
-            event_conditions = ["1 = 1"]
-            event_params: list[Any] = []
-            if args.project_id:
-                event_conditions.append("s.project_id = ?")
-                event_params.append(args.project_id)
-            if args.user_id:
-                event_conditions.append("s.user_id = ?")
-                event_params.append(args.user_id)
-            if args.entity_id:
-                event_conditions.append("s.user_id = ?")
-                event_params.append(args.entity_id)
-            if args.role:
-                event_conditions.append("e.role = ?")
-                event_params.append(args.role)
-            if args.kind:
-                event_conditions.append("e.kind = ?")
-                event_params.append(args.kind)
-
-            event_rows = conn.execute(
-                f"""
-                SELECT e.*, s.project_id
-                FROM events e
-                JOIN sessions s ON s.id = e.session_id
-                WHERE {' AND '.join(event_conditions)}
-                ORDER BY e.created_at DESC
-                """,
-                event_params,
-            ).fetchall()
-            ranked_events = sorted(
-                [
-                    row
-                    for row in event_rows
-                    if not query or history_event_match_score(row, query) > 0
-                ],
-                key=lambda row: score_history_event(row, query),
-                reverse=True,
-            )[: args.limit]
-            event_hits = [serialize_history_event(row, query) for row in ranked_events]
-
-        if args.session_id and returned_memory_ids:
-            conn.execute(
-                """
-                INSERT INTO retrieval_logs(id, session_id, query, returned_memory_ids, created_at)
-                VALUES(?, ?, ?, ?, ?)
-                """,
-                (
-                    new_id("ret"),
-                    args.session_id,
-                    query or "",
-                    json.dumps(returned_memory_ids, ensure_ascii=False),
-                    utc_now(),
-                ),
-            )
-            conn.commit()
-    finally:
-        conn.close()
+    if args.session_id and returned_memory_ids:
+        local_store.append_retrieval_log(
+            session_id=args.session_id, query=query or "", returned_memory_ids=returned_memory_ids
+        )
 
     print_json(
         {
@@ -1218,133 +839,58 @@ def cmd_history(args: argparse.Namespace) -> None:
 
 
 def cmd_search(args: argparse.Namespace) -> None:
-    conn = connect(args.db)
-    try:
-        conditions = ["status = 'active'"]
-        params: list[Any] = []
+    records = args.markdown_store.search(
+        query=args.query,
+        entity_id=args.entity_id,
+        type=args.memory_type,
+        scope=args.scope,
+        project_id=args.project_id,
+    )
+    ranked = sorted(records, key=lambda r: score_memory(r, args.query), reverse=True)[: args.limit]
 
-        if args.entity_id:
-            conditions.append("entity_id = ?")
-            params.append(args.entity_id)
-        if args.memory_type:
-            conditions.append("memory_type = ?")
-            params.append(args.memory_type)
-        if args.scope:
-            conditions.append("scope = ?")
-            params.append(args.scope)
-        if args.project_id:
-            conditions.append("(project_id = ? OR project_id IS NULL)")
-            params.append(args.project_id)
-        if args.query:
-            like_value = f"%{args.query}%"
-            conditions.append(
-                """
-                (
-                    id IN (
-                        SELECT memory_id
-                        FROM memories_fts
-                        WHERE memories_fts MATCH ?
-                    )
-                    OR key LIKE ?
-                    OR summary LIKE ?
-                    OR value_json LIKE ?
-                )
-                """
-            )
-            params.extend([args.query, like_value, like_value, like_value])
+    if args.session_id:
+        args.local_store.append_retrieval_log(
+            session_id=args.session_id,
+            query=args.query or "",
+            returned_memory_ids=[r["id"] for r in ranked],
+        )
 
-        rows = conn.execute(
-            f"""
-            SELECT memories.*
-            FROM memories
-            WHERE {' AND '.join(conditions)}
-            ORDER BY memories.updated_at DESC
-            """,
-            params,
-        ).fetchall()
-        ranked = sorted(rows, key=lambda row: score_memory(row, args.query), reverse=True)[: args.limit]
-        if args.session_id:
-            conn.execute(
-                """
-                INSERT INTO retrieval_logs(id, session_id, query, returned_memory_ids, created_at)
-                VALUES(?, ?, ?, ?, ?)
-                """,
-                (
-                    new_id("ret"),
-                    args.session_id,
-                    args.query or "",
-                    json.dumps([row["id"] for row in ranked], ensure_ascii=False),
-                    utc_now(),
-                ),
-            )
-            conn.commit()
-    finally:
-        conn.close()
-
-    print_json({"ok": True, "memories": [serialize_memory(row) for row in ranked], "count": len(ranked)})
+    print_json({"ok": True, "memories": [serialize_memory(r) for r in ranked], "count": len(ranked)})
 
 
 def cmd_get_context(args: argparse.Namespace) -> None:
-    conn = connect(args.db)
-    try:
-        rows = conn.execute(
-            """
-            SELECT *
-            FROM memories
-            WHERE status = 'active'
-              AND (
-                (scope = 'global' AND entity_type = 'user' AND entity_id = ?)
-                OR (scope = 'project' AND project_id = ?)
-              )
-            ORDER BY updated_at DESC
-            """,
-            (args.user_id, args.project_id),
-        ).fetchall()
-    finally:
-        conn.close()
+    """Return a response-context bundle, bucketed by ``type``.
 
-    payload = {"procedural": [], "semantic": [], "episodic": []}
-    limits = {"procedural": 5, "semantic": 10, "episodic": 10}
-    for row in rows:
-        bucket = row["memory_type"]
+    ``--user-id`` is accepted for CLI stability but no longer used: this
+    store serves a single local default user and frontmatter no longer
+    records an entity to filter global memories by (see
+    ``MarkdownMemoryStore.get_context``).
+    """
+    records = args.markdown_store.get_context(project_id=args.project_id)
+
+    payload: dict[str, list[dict[str, Any]]] = {"feedback": [], "profile": [], "reference": []}
+    limits = {"feedback": 5, "profile": 10, "reference": 10}
+    for record in records:
+        bucket = record["type"]
         if bucket not in payload:
             continue
         if len(payload[bucket]) >= limits[bucket]:
             continue
-        payload[bucket].append(serialize_memory(row))
+        payload[bucket].append(serialize_memory(record))
 
     print_json({"ok": True, "context": payload})
 
 
 def cmd_forget(args: argparse.Namespace) -> None:
-    conn = connect(args.db)
-    try:
-        now = utc_now()
-        updated = conn.execute(
-            """
-            UPDATE memories
-            SET status = 'deleted', valid_until = ?, updated_at = ?
-            WHERE id = ? AND status = 'active'
-            """,
-            (now, now, args.memory_id),
-        )
-        conn.execute(
-            """
-            INSERT INTO deletions(id, target_type, target_id, reason, created_at)
-            VALUES(?, 'memory', ?, ?, ?)
-            """,
-            (new_id("del"), args.memory_id, args.reason, now),
-        )
-        conn.execute("DELETE FROM memories_fts WHERE memory_id = ?", (args.memory_id,))
-        conn.commit()
-    finally:
-        conn.close()
-
-    print_json({"ok": True, "updated": updated.rowcount, "memory_id": args.memory_id})
+    updated = args.markdown_store.forget(args.memory_id)
+    args.local_store.append_deletion_log(
+        target_type="memory", target_id=args.memory_id, reason=args.reason
+    )
+    print_json({"ok": True, "updated": updated, "memory_id": args.memory_id})
 
 
 def cmd_queue_session(args: argparse.Namespace) -> None:
-    """Save a complete session payload to a JSONL file without touching SQLite."""
+    """Save a complete session payload to a JSONL file (no store writes)."""
     queue_dir = QUEUE_DIR
     queue_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1365,8 +911,10 @@ def cmd_queue_session(args: argparse.Namespace) -> None:
     print_json({"ok": True, "queued": str(fname)})
 
 
-def _flush_one_queue_item(conn: sqlite3.Connection, data: dict[str, Any]) -> None:
-    """Write a single queued session payload into the database."""
+def _flush_one_queue_item(
+    local_store: LocalPipelineStore, markdown_store: MarkdownMemoryStore, data: dict[str, Any]
+) -> None:
+    """Write a single queued session payload into the file-based stores."""
     session_id = data["session_id"]
     client = data.get("client", "unknown")
     user_id = data.get("user_id", "default")
@@ -1374,137 +922,134 @@ def _flush_one_queue_item(conn: sqlite3.Connection, data: dict[str, Any]) -> Non
     user_content = data.get("user_content", "")
     assistant_content = data.get("assistant_content", "")
     summary = data.get("summary", "")
-    now = utc_now()
 
-    ensure_session(conn, session_id, client, user_id, project_id)
+    local_store.ensure_session(session_id, client=client, user_id=user_id, project_id=project_id)
 
     if user_content:
-        conn.execute(
-            """
-            INSERT INTO events(id, session_id, role, kind, content, created_at, importance)
-            VALUES(?, ?, 'user', 'message', ?, ?, ?)
-            """,
-            (new_id("evt"), session_id, user_content, now, 0.5),
-        )
+        local_store.append_event(session_id, role="user", kind="message", content=user_content, importance=0.5)
 
     if assistant_content:
-        conn.execute(
-            """
-            INSERT INTO events(id, session_id, role, kind, content, created_at, importance)
-            VALUES(?, ?, 'assistant', 'message', ?, ?, ?)
-            """,
-            (new_id("evt"), session_id, assistant_content, now, 0.5),
+        local_store.append_event(
+            session_id, role="assistant", kind="message", content=assistant_content, importance=0.5
         )
 
     effective_summary = summary or f"session:{session_id}"
-    conn.execute(
-        """
-        UPDATE sessions
-        SET ended_at = ?, summary = ?
-        WHERE id = ?
-        """,
-        (now, effective_summary, session_id),
-    )
-    conn.execute(
-        """
-        INSERT INTO events(id, session_id, role, kind, content, created_at, importance)
-        VALUES(?, ?, 'assistant', 'summary', ?, ?, ?)
-        """,
-        (new_id("evt"), session_id, effective_summary, now, 0.9),
+    local_store.update_session(session_id, ended_at=utc_now(), summary=effective_summary)
+    local_store.append_event(
+        session_id, role="assistant", kind="summary", content=effective_summary, importance=0.9
     )
 
-    events = iter_events_for_extraction(conn, session_id)
-    insert_observations_for_events(conn, events)
+    events = iter_events_for_extraction(local_store, session_id)
+    insert_observations_for_events(local_store, events)
 
-    session_row = conn.execute(
-        "SELECT user_id, project_id FROM sessions WHERE id = ?",
-        (session_id,),
-    ).fetchone()
-    if session_row:
-        obs_rows = conn.execute(
-            """
-            SELECT o.*
-            FROM observations o
-            WHERE o.entity_id IN (?, ?)
-            ORDER BY o.observed_at ASC
-            """,
-            (session_row["user_id"], session_row["project_id"] or "default"),
-        ).fetchall()
-        for obs_row in obs_rows:
-            upsert_memory_from_observation(conn, obs_row)
+    observations = sorted(local_store.iter_observations(session_id), key=lambda o: o["observed_at"])
+    for observation in observations:
+        safe_upsert_memory_from_observation(markdown_store, observation)
 
 
 def cmd_flush_queue(args: argparse.Namespace) -> None:
-    """Read queued JSONL files and write their payloads into the SQLite database."""
+    """Read queued JSONL files and write their payloads into the file-based stores."""
     queue_dir = QUEUE_DIR
     files = sorted(queue_dir.glob("*.jsonl")) if queue_dir.exists() else []
     if not files:
         print_json({"ok": True, "flushed": 0})
         return
 
-    conn = connect_readwrite(args.db)
     flushed = 0
-    try:
-        for f in files:
-            try:
-                data = json.loads(f.read_text(encoding="utf-8"))
-                _flush_one_queue_item(conn, data)
-                conn.commit()
-                f.unlink()
-                flushed += 1
-            except Exception:
-                # Keep the file so it can be retried later
-                continue
-    finally:
-        conn.close()
+    for f in files:
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            _flush_one_queue_item(args.local_store, args.markdown_store, data)
+            f.unlink()
+            flushed += 1
+        except Exception:
+            # Keep the file so it can be retried later
+            continue
 
     print_json({"ok": True, "flushed": flushed})
 
 
-def flush_queue_if_possible(db_path: Path) -> int:
-    """Attempt to flush the queue to DB if DB is writable. Never raises."""
-    try:
-        # Quick writability probe
-        probe = sqlite3.connect(db_path)
-        try:
-            probe.execute("BEGIN IMMEDIATE")
-            probe.rollback()
-        finally:
-            probe.close()
-    except Exception:
-        return 0
-
+def flush_queue_if_possible(vault_dir: Path, local_dir: Path) -> int:
+    """Attempt to flush the queue to the file-based stores. Never raises."""
     try:
         queue_dir = QUEUE_DIR
         files = sorted(queue_dir.glob("*.jsonl")) if queue_dir.exists() else []
         if not files:
             return 0
 
-        conn = connect_readwrite(db_path)
+        local_store = LocalPipelineStore(local_dir)
+        markdown_store = MarkdownMemoryStore(vault_dir)
         flushed = 0
-        try:
-            for f in files:
-                try:
-                    data = json.loads(f.read_text(encoding="utf-8"))
-                    _flush_one_queue_item(conn, data)
-                    conn.commit()
-                    f.unlink()
-                    flushed += 1
-                except Exception:
-                    continue
-        finally:
-            conn.close()
+        for f in files:
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+                _flush_one_queue_item(local_store, markdown_store, data)
+                f.unlink()
+                flushed += 1
+            except Exception:
+                continue
         return flushed
     except Exception:
         return 0
 
 
+def cmd_cleanup(args: argparse.Namespace) -> None:
+    """Clean up stale data: remove recent_summary memories/observations.
+
+    Earlier revisions also deduplicated separate ``status="superseded"``
+    memory files here, but that concept no longer exists: value changes are
+    folded into the same file's ``## 変更履歴`` section instead of ever
+    creating a separate file (see ``llm-shared-memory-design.md``), so
+    ``deleted_duplicate_superseded`` is always ``0`` now. It is kept in the
+    output for CLI contract stability (this command's output is outside the
+    memories-schema redesign's allowed breakage, see the design doc).
+    """
+    markdown_store: MarkdownMemoryStore = args.markdown_store
+    local_store: LocalPipelineStore = args.local_store
+
+    recent_summary_title = humanize_key("recent_summary")
+    summary_records = [r for r in markdown_store.iter_all() if r["title"] == recent_summary_title]
+    deleted_summary = sum(1 for r in summary_records if markdown_store.delete(r["id"]))
+
+    deleted_observations = 0
+    for session in local_store.list_sessions():
+        deleted_observations += local_store.remove_matching_observations(
+            session["id"], attribute="recent_summary"
+        )
+
+    print_json(
+        {
+            "ok": True,
+            "deleted_summary_memories": deleted_summary,
+            "deleted_summary_observations": deleted_observations,
+            "deleted_duplicate_superseded": 0,
+        }
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Shared memory CLI for local LLM environments")
-    parser.add_argument("--db", type=Path, default=DEFAULT_DB_PATH, help="Path to SQLite database")
+    parser.add_argument(
+        "--db",
+        type=Path,
+        default=None,
+        help="Deprecated, ignored. Storage is file-based; see --vault/--local-dir.",
+    )
+    parser.add_argument(
+        "--vault",
+        type=Path,
+        default=None,
+        help="Vault directory for stable memories (default: $LLM_MEMORY_VAULT)",
+    )
+    parser.add_argument(
+        "--local-dir",
+        type=Path,
+        default=None,
+        help="Local directory for the pipeline layer (default: $LLM_MEMORY_LOCAL_DIR)",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    init_db = subparsers.add_parser("init-db", help="Initialize database schema")
+    init_db = subparsers.add_parser("init-db", help="Initialize the vault/local directories")
     init_db.set_defaults(func=cmd_init_db)
 
     start_session = subparsers.add_parser("start-session", help="Create a session if needed")
@@ -1543,11 +1088,11 @@ def build_parser() -> argparse.ArgumentParser:
     consolidate.add_argument("--attribute")
     consolidate.set_defaults(func=cmd_consolidate)
 
-    search = subparsers.add_parser("search", help="Search active memories")
+    search = subparsers.add_parser("search", help="Search current (non-archived) memories")
     search.add_argument("--session-id")
     search.add_argument("--query")
     search.add_argument("--entity-id")
-    search.add_argument("--memory-type", choices=["procedural", "semantic", "episodic"])
+    search.add_argument("--memory-type", choices=["profile", "feedback", "reference"])
     search.add_argument("--scope", choices=["global", "project", "client", "temporary"])
     search.add_argument("--project-id")
     search.add_argument("--limit", type=int, default=10)
@@ -1559,7 +1104,7 @@ def build_parser() -> argparse.ArgumentParser:
     history.add_argument("--project-id")
     history.add_argument("--user-id")
     history.add_argument("--entity-id")
-    history.add_argument("--memory-type", choices=["procedural", "semantic", "episodic"])
+    history.add_argument("--memory-type", choices=["profile", "feedback", "reference"])
     history.add_argument("--role", choices=["user", "assistant", "system", "tool"])
     history.add_argument("--kind")
     history.add_argument("--limit", type=int, default=10)
@@ -1576,13 +1121,13 @@ def build_parser() -> argparse.ArgumentParser:
     get_context.add_argument("--project-id", required=True)
     get_context.set_defaults(func=cmd_get_context)
 
-    forget = subparsers.add_parser("forget", help="Mark a memory as deleted")
+    forget = subparsers.add_parser("forget", help="Archive a memory (move it out of active results, never deleted)")
     forget.add_argument("--memory-id", required=True)
     forget.add_argument("--reason", required=True)
     forget.set_defaults(func=cmd_forget)
 
     queue_session = subparsers.add_parser(
-        "queue-session", help="Save a session payload to a file-based queue (no DB write)"
+        "queue-session", help="Save a session payload to a file-based queue (no store write)"
     )
     queue_session.add_argument("--session-id", required=True)
     queue_session.add_argument("--client", required=True)
@@ -1594,7 +1139,7 @@ def build_parser() -> argparse.ArgumentParser:
     queue_session.set_defaults(func=cmd_queue_session)
 
     flush_queue = subparsers.add_parser(
-        "flush-queue", help="Flush queued session files into the SQLite database"
+        "flush-queue", help="Flush queued session files into the file-based stores"
     )
     flush_queue.set_defaults(func=cmd_flush_queue)
 
@@ -1615,7 +1160,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     write_memory.add_argument("--session-id", required=True)
     write_memory.add_argument(
-        "--memory-type", required=True, choices=["semantic", "episodic", "procedural"]
+        "--memory-type", required=True, choices=["profile", "feedback", "reference"]
     )
     write_memory.add_argument("--entity-type", default="user")
     write_memory.add_argument("--entity-id", default="default")
@@ -1638,7 +1183,19 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
-    args.db = args.db.expanduser()
+    args.db = args.db.expanduser() if args.db else None
+
+    vault_dir, used_fallback = resolve_vault_dir(args.vault.expanduser() if args.vault else None)
+    if used_fallback:
+        print(
+            f"warning: LLM_MEMORY_VAULT is not set; falling back to {vault_dir} "
+            "(not synced by Syncthing)",
+            file=sys.stderr,
+        )
+    local_dir = resolve_local_dir(args.local_dir.expanduser() if args.local_dir else None)
+
+    args.markdown_store = MarkdownMemoryStore(vault_dir)
+    args.local_store = LocalPipelineStore(local_dir)
     args.func(args)
 
 

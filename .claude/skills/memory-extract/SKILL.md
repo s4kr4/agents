@@ -34,7 +34,7 @@ python3 memory/memory.py list-unextracted --limit 10
 ```bash
 python3 memory/memory.py write-memory \
   --session-id SESSION_ID \
-  --memory-type semantic \
+  --memory-type profile \
   --key "簡潔な英語キー" \
   --summary "日本語での簡潔な説明" \
   --confidence 0.8 \
@@ -42,8 +42,8 @@ python3 memory/memory.py write-memory \
 ```
 
 パラメータ:
-- `--memory-type`: `semantic`（事実・嗜好）/ `procedural`（行動ルール）/ `episodic`（重要な出来事）
-- `--scope`: `global`（全プロジェクト共通）/ `project`（特定プロジェクト、`--project-id` も指定）
+- `--memory-type`: `profile`（静的事実・嗜好）/ `feedback`（協働のしかたの学び）/ `reference`（外部システムへのポインタ・プロジェクト固有の決定事項）
+- `--scope`: `global`（全プロジェクト共通）/ `project`（特定プロジェクト、`--project-id` も必須指定。省略するとエラーになる）
 - `--confidence`: 明示的発言 0.8〜1.0、推測 0.5〜0.7
 - `--entity-type`: デフォルト `user`。プロジェクト記憶なら `project`
 - `--entity-id`: デフォルト `default`。プロジェクトなら project_id
@@ -64,11 +64,11 @@ python3 memory/memory.py get-context --user-id default --project-id default
 ## 判断基準
 
 ### 書くべき memory の例
-- 「応答は日本語で行う」（procedural, confidence=1.0）
-- 「Web 開発では TypeScript を好む」（semantic, confidence=0.8）
-- 「Arch Linux を使用」（semantic, confidence=0.9）
-- 「TDD を重視する」（procedural, confidence=0.8）
-- 「lab-web プロジェクトは pnpm monorepo」（semantic, scope=project, entity_type=project）
+- 「応答は日本語で行う」（feedback, confidence=1.0）
+- 「Web 開発では TypeScript を好む」（profile, confidence=0.8）
+- 「Arch Linux を使用」（profile, confidence=0.9）
+- 「TDD を重視する」（feedback, confidence=0.8）
+- 「lab-web プロジェクトは pnpm monorepo」（reference, scope=project, project_id=lab-web）
 
 ### 書くべきでない memory の例
 - 「今日 Docker ビルドを修正した」（一時的）
@@ -78,4 +78,4 @@ python3 memory/memory.py get-context --user-id default --project-id default
 ## 注意
 - 抽出すべき情報がないセッションは `mark-extracted` だけ実行する
 - 1セッションから複数の memory を抽出してよい
-- 既存の active memory と重複する内容は書かない
+- 既存の記憶（archive されていないもの）と重複する内容は書かない

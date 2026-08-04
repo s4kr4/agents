@@ -5,7 +5,6 @@ input=$(cat)
 
 repo_root="${HOME}/.agents"
 memory_cli="${repo_root}/memory/memory.py"
-db_path="${LLM_MEMORY_DB:-${repo_root}/memory/memory.db}"
 
 session_id=$(printf '%s' "$input" | jq -r '.session_id // empty')
 cwd=$(printf '%s' "$input" | jq -r '.cwd // ""')
@@ -57,16 +56,16 @@ summary_text=$(jq -rs '
   | join(" / ")
 ' "$transcript_path" 2>/dev/null || printf '')
 
-# 直接DB書き込みを試み、失敗したら queue にフォールバック
+# 直接 local/Vault への書き込みを試み、失敗したら queue にフォールバック
 {
-  python3 "$memory_cli" --db "$db_path" start-session \
+  python3 "$memory_cli" start-session \
     --session-id "$session_id" \
     --client "claude-code" \
     --user-id "default" \
     --project-id "$project_id" >/dev/null 2>&1 &&
 
   if [ -n "$last_user_text" ]; then
-    python3 "$memory_cli" --db "$db_path" append-event \
+    python3 "$memory_cli" append-event \
       --session-id "$session_id" \
       --client "claude-code" \
       --user-id "default" \
@@ -77,7 +76,7 @@ summary_text=$(jq -rs '
   fi &&
 
   if [ -n "$last_assistant_text" ]; then
-    python3 "$memory_cli" --db "$db_path" append-event \
+    python3 "$memory_cli" append-event \
       --session-id "$session_id" \
       --client "claude-code" \
       --user-id "default" \
@@ -87,14 +86,14 @@ summary_text=$(jq -rs '
       --content "$last_assistant_text" >/dev/null 2>&1
   fi &&
 
-  python3 "$memory_cli" --db "$db_path" end-session \
+  python3 "$memory_cli" end-session \
     --session-id "$session_id" \
     --summary "${summary_text:-session:${session_id}}" \
     --append-summary-event \
     --extract \
     --consolidate >/dev/null 2>&1
 } || {
-  # DB書き込み失敗 → ファイルキューにフォールバック
+  # local/Vault への書き込み失敗 → ファイルキューにフォールバック
   python3 "$memory_cli" queue-session \
     --session-id "$session_id" \
     --client "claude-code" \

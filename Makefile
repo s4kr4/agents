@@ -41,5 +41,5 @@ help:
 	@echo "  make sync-skills-codex       - Sync Codex skills into Claude"
 	@echo "  make sync-skills-claude-dry  - Preview Claude -> Codex sync"
 	@echo "  make sync-skills-codex-dry   - Preview Codex -> Claude sync"
-	@echo "  make memory-init             - Initialize the shared memory SQLite DB"
+	@echo "  make memory-init             - Initialize the shared memory Vault/local directories"
 	@echo "  make memory-demo             - Run a minimal shared memory demo"
