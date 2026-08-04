@@ -18,9 +18,8 @@ importance="${5:-0.5}"
 project_id="${LLM_MEMORY_PROJECT_ID:-$(basename "${PWD}")}"
 user_id="${LLM_MEMORY_USER_ID:-default}"
 client="${LLM_MEMORY_CLIENT:-codex}"
-db_path="${LLM_MEMORY_DB:-${repo_root}/memory/memory.db}"
 
-python3 "${memory_cli}" --db "${db_path}" append-event \
+python3 "${memory_cli}" append-event \
   --session-id "${session_id}" \
   --client "${client}" \
   --user-id "${user_id}" \

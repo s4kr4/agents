@@ -11,10 +11,9 @@ memory_cli="${repo_root}/memory/memory.py"
 
 session_id="$1"
 summary="${2:-}"
-db_path="${LLM_MEMORY_DB:-${repo_root}/memory/memory.db}"
 
 cmd=(
-  python3 "${memory_cli}" --db "${db_path}" end-session
+  python3 "${memory_cli}" end-session
   --session-id "${session_id}"
   --append-summary-event
   --extract

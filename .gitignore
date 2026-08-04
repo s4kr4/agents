@@ -3,6 +3,9 @@
 .claude/skills/*/feedback/
 __pycache__/
 *.pyc
-memory/memory.db
-memory/memory.db-journal
-memory/memory.db-wal
+memory/memory.db*
+memory/local/
+memory/vault/
+memory/local.bak*/
+memory/vault.bak*/
+memory/test_memory.py.bak
