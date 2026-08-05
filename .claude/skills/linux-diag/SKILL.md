@@ -171,4 +171,5 @@ grep -l "Docker" ~/.claude/skills/linux-diag/cartes/*.md
 |-------|------|
 | xrdp-drm-permission.md | xrdp, DRM, video, render, 権限 |
 | xrdp-software-rendering.md | xrdp, GNOME, レンダリング, Mutter, 環境変数 |
+| xrdp-service-pidfile-timeout.md | xrdp, systemd, PIDFile, Type=forking, タイムアウト, ソースビルド |
 | docker-gpu-persistence.md | Docker, GPU, NVIDIA, Persistence Mode |
