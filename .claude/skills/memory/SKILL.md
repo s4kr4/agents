@@ -15,7 +15,7 @@ description: 複数の LLM 実行環境で共有するローカルメモリ基�
 
 ## ストレージ構成
 
-SQLite は使わない。ファイルベースの 2 層構成。
+ファイルベースの 2 層構成。
 
 - **Vault**（`memories`、Syncthing 同期対象）: `$LLM_MEMORY_VAULT/memory/<id>.md`（frontmatter 付き Markdown、1 記憶 = 1 ファイル）。未設定時は `~/.agents/memory/vault/` にフォールバックし、stderr に警告を出す。
 - **local**（`sessions`/`events`/`observations`/監査ログ、同期対象外）: `$LLM_MEMORY_LOCAL_DIR`（既定 `~/.agents/memory/local/`）。

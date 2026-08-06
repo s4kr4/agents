@@ -9,7 +9,7 @@ Claude Code と Codex の間で共有するローカル記憶を、必要と判�
 
 ## 基盤情報
 
-SQLite は使わない。ファイルベースの 2 層構成（詳細は `/memory` スキル参照）。
+ファイルベースの 2 層構成（詳細は `/memory` スキル参照）。
 
 - Vault（memories・Syncthing 同期対象）: `$LLM_MEMORY_VAULT/memory/`（未設定時は `~/.agents/memory/vault/` にフォールバック）
 - local（sessions/events/observations・同期対象外）: `$LLM_MEMORY_LOCAL_DIR`（既定 `~/.agents/memory/local/`）
