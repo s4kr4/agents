@@ -139,6 +139,11 @@ def cmd_init_db(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_migrate_layout(args: argparse.Namespace) -> None:
+    moved = args.markdown_store.migrate_legacy_root_memories()
+    print_json({"ok": True, "moved": moved})
+
+
 def cmd_start_session(args: argparse.Namespace) -> None:
     session_id = args.session_id or new_id("sess")
     args.local_store.ensure_session(
@@ -1051,6 +1056,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     init_db = subparsers.add_parser("init-db", help="Initialize the vault/local directories")
     init_db.set_defaults(func=cmd_init_db)
+
+    migrate_layout = subparsers.add_parser(
+        "migrate-layout", help="Move legacy root-level global memories under memory/global"
+    )
+    migrate_layout.set_defaults(func=cmd_migrate_layout)
 
     start_session = subparsers.add_parser("start-session", help="Create a session if needed")
     start_session.add_argument("--session-id")

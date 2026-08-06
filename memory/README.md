@@ -12,7 +12,8 @@ Codex や Claude Code など複数の LLM クライアントからセッショ�
 - frontmatter は `type`（`profile` / `feedback` / `reference` の3種）・`created`・`updated` のみの最小構成
 - 本文は人間可読な説明文＋任意で「## 変更履歴」セクション（値が変わった場合のみ、変更前の値と日付を追記する。新しいファイルは作らない）
 - ディレクトリ構成（`scope` ごとにグルーピング）:
-  - `memory/<key>.md` — `scope=global`
+  - `memory/` 直下には生成物の `memory/_index.md` **だけ**を置く。具体的な記憶ファイルは必ず分類ディレクトリ内に置く
+  - `memory/global/<key>.md` — `scope=global`
   - `memory/projects/<project-slug>/<key>.md` — `scope=project`
   - `memory/clients/<entity-slug>/<key>.md` — `scope=client`
   - `memory/temporary/<key>.md` — `scope=temporary`
@@ -68,7 +69,10 @@ python3 memory/memory.py search --query "エディタ"
 python3 memory/memory.py get-context --user-id default --project-id my-project
 python3 memory/memory.py write-memory --session-id <id> --memory-type profile --key preferred_editor --summary "好みのエディタ: Neovim" --scope global
 python3 memory/memory.py forget --memory-id <id> --reason "古くなったため"
+python3 memory/memory.py migrate-layout
 ```
+
+`migrate-layout` は旧形式の `memory/<key>.md` を `memory/global/<key>.md` へ安全に移す一回限りの移行コマンドです。移動先に同名ファイルがある場合は上書きせずエラーにします。
 
 ## テスト
 
