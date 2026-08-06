@@ -41,11 +41,16 @@ make update  # 最新を pull してデプロイ
 
 ## 共有メモリ
 
-ローカルの SQLite を使い、Codex や Claude Code など複数の LLM クライアントからセッション横断で記憶を共有する仕組みです。Claude Code では Stop hook で自動保存、Codex にはシェルラッパーを用意しています。DB に書き込めない環境では自動的にファイルキューにフォールバックします。
+ファイルベースの 2 層構成で Codex や Claude Code など複数の LLM クライアントからセッション横断の記憶を共有する仕組みです。
 
-詳しい使い方は `memory` スキル（`.claude/skills/memory/SKILL.md`）を参照してください。
+- Vault（`memories`。Syncthing 同期対象）: 安定した記憶を Obsidian Vault 配下に Markdown で保存。1 論理キー = 1 ファイルで、値の変遷は同一ファイル内の変更履歴に追記する
+- local（`sessions`/`events`/`observations`。同期対象外）: 生ログ・pipeline 層のデータを `~/.agents/memory/local/` 配下にファイルとして保存
+
+Codex にはセッション開始・終了時に自動でメモリ操作を行うシェルラッパーを用意しています。Claude Code 側は毎ターン自動保存する仕組みはなく、`shared-memory` スキル経由でモデルが必要と判断したときに手動で読み書きします。DB に書き込めない環境向けのファイルキューへのフォールバック（`queue-session` / `flush-queue`）は pipeline 層の仕組みとして維持されています。
+
+詳しい使い方は `memory` スキル（`.claude/skills/memory/SKILL.md`）および `shared-memory` スキル（`.claude/skills/shared-memory/SKILL.md`）を参照してください。
 
 ```bash
-make memory-init  # DB 初期化
+make memory-init  # Vault/local ディレクトリの初期化
 make memory-demo  # 最小デモ
 ```
