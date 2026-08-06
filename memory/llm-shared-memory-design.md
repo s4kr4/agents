@@ -281,13 +281,14 @@ Obsidian のようなノートアプリでは、1 ファイルは「あるトピ
 
 `$LLM_MEMORY_VAULT/memory/` 配下は `scope` に応じてディレクトリを分ける。
 1 論理キー = 1 ファイルの原則により件数がそれほど多くならない前提のため、
-フラット配置がふさわしい `scope` はそのままフラットに、グルーピングが
-意味を持つ `scope` のみサブディレクトリを切る。
+すべての scope にサブディレクトリを切る。これにより `memory/` 直下は
+`_index.md` 専用となり、具体的な記憶は分類済みの場所にしか作られない。
 
 ```
 $LLM_MEMORY_VAULT/memory/
-  _index.md
-  <key-slug>.md                     # scope=global（最も典型的なケース）
+  _index.md                          # memory/ 直下に置く唯一の Markdown ファイル
+  global/
+    <key-slug>.md                    # scope=global（最も典型的なケース）
   projects/
     <project-slug>/
       <key-slug>.md                 # scope=project

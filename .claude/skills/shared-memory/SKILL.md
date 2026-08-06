@@ -15,6 +15,12 @@ Claude Code と Codex の間で共有するローカル記憶を、必要と判�
 - local（sessions/events/observations・同期対象外）: `$LLM_MEMORY_LOCAL_DIR`（既定 `~/.agents/memory/local/`）
 - CLI: `python3 ~/.agents/memory/memory.py`
 
+## Vault の配置原則
+
+- `memory/` 直下に置く Markdown ファイルは生成された `_index.md` のみとする。
+- 個別の記憶は scope に対応する分類ディレクトリ（例: `memory/global/`、`memory/projects/<project-slug>/`）内へ保存する。
+- 記憶ファイルを Vault 直下へ手作業で作成しない。CLI の `write-memory` を使い、分類・索引更新を任せる。
+
 ## 保存フロー（write-memory）
 
 `write-memory` は `session_id` に紐づく event を作ってから observation → memory を作る。会話中のセッション ID を把握していない場合は、先に `start-session` で仮のセッションを作ってから書き込む。
@@ -74,10 +80,10 @@ python3 ~/.agents/memory/memory.py history --query 'vim'
 ## 削除（forget）
 
 ```bash
-python3 ~/.agents/memory/memory.py forget --memory-id preferred-language-runtime --reason "ユーザー環境が変わったため"
+python3 ~/.agents/memory/memory.py forget --memory-id global/preferred-language-runtime --reason "ユーザー環境が変わったため"
 ```
 
-`--memory-id` と `--reason`（いずれも必須）を指定する。`--memory-id` は `mem_xxxx` のような不透明な ID ではなく、`search`/`get-context` が返す `id`（例: `preferred-language-runtime`、プロジェクトスコープなら `projects/<project_id>/<slug>`）をそのまま渡す。`forget` は記憶ファイルを削除するのではなく `memory/archive/` 配下へ移動するだけなので、`search`/`get-context`/`history` からは見えなくなるが、Vault 上には残り続ける。
+`--memory-id` と `--reason`（いずれも必須）を指定する。`--memory-id` は `mem_xxxx` のような不透明な ID ではなく、`search`/`get-context` が返す `id`（例: `global/preferred-language-runtime`、プロジェクトスコープなら `projects/<project_id>/<slug>`）をそのまま渡す。`forget` は記憶ファイルを削除するのではなく `memory/archive/` 配下へ移動するだけなので、`search`/`get-context`/`history` からは見えなくなるが、Vault 上には残り続ける。
 
 ## 保存基準
 

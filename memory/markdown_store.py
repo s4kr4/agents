@@ -12,10 +12,11 @@ after how a note-taking app (e.g. Obsidian) treats a topic, not after a
 relational table's row-per-version history.
 
 Files are grouped into directories by ``scope`` so that the Vault stays
-legible as it grows, instead of a single flat directory:
+legible as it grows. ``memory/`` itself contains only the generated index;
+every memory Markdown file lives in a subdirectory:
 
 - ``scope="global"`` (the common case: a user-level preference/fact) is kept
-  flat directly under ``memory/``.
+  under ``memory/global/``.
 - ``scope="project"`` is grouped under ``memory/projects/<project_slug>/``.
 - ``scope="client"`` is grouped under ``memory/clients/<entity_slug>/``.
 - ``scope="temporary"`` is kept flat under ``memory/temporary/``.
@@ -140,6 +141,8 @@ def canonical_memory_id(
     """
     base = _entity_prefixed_slug(entity_type, entity_id, key)
 
+    if scope == "global":
+        return f"global/{base}"
     if scope == "project" and project_id:
         return f"projects/{slugify(project_id)}/{base}"
     if scope == "client":
@@ -157,6 +160,8 @@ def _scope_info_from_id(memory_id: str) -> tuple[str, str | None, str | None]:
     module docstring / ``canonical_memory_id``).
     """
     parts = memory_id.split("/")
+    if parts[0] == "global":
+        return "global", None, None
     if parts[0] == "projects" and len(parts) >= 2:
         return "project", parts[1], None
     if parts[0] == "clients" and len(parts) >= 2:
@@ -370,11 +375,16 @@ class MarkdownMemoryStore:
         summary, history = _split_history(remaining)
         memory_id = path.relative_to(self.memory_dir).with_suffix("").as_posix()
         scope, project_id, entity_id = _scope_info_from_id(memory_id)
+        created = frontmatter.get("created")
+        updated = frontmatter.get("updated")
         return {
             "id": memory_id,
             "type": frontmatter.get("type"),
-            "created": frontmatter.get("created"),
-            "updated": frontmatter.get("updated"),
+            # PyYAML parses unquoted ISO dates as datetime.date. Normalize
+            # legacy hand-edited files to the string form used by sorting and
+            # the CLI's JSON output.
+            "created": str(created) if created is not None else None,
+            "updated": str(updated) if updated is not None else None,
             "title": title,
             "summary": summary,
             "history": history,
@@ -395,6 +405,33 @@ class MarkdownMemoryStore:
                 continue
             records.append(self._read_path(path))
         return records
+
+    def migrate_legacy_root_memories(self) -> list[str]:
+        """Move pre-layout global memory files into ``memory/global/``.
+
+        The migration is explicit so normal reads never mutate a synced Vault.
+        It refuses to overwrite a destination: resolve any duplicate manually
+        before retrying, then regenerates the derived index after a successful
+        move.
+        """
+        legacy_paths = sorted(
+            path
+            for path in self.memory_dir.glob("*.md")
+            if path.name != INDEX_FILENAME and not SYNC_CONFLICT_PATTERN.search(path.name)
+        )
+        destinations = [self.memory_dir / "global" / path.name for path in legacy_paths]
+        collisions = [destination for destination in destinations if destination.exists()]
+        if collisions:
+            names = ", ".join(str(path.relative_to(self.memory_dir)) for path in collisions)
+            raise FileExistsError(f"legacy layout migration would overwrite existing files: {names}")
+
+        for source, destination in zip(legacy_paths, destinations, strict=True):
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(source, destination)
+
+        if legacy_paths:
+            self._write_index()
+        return [path.relative_to(self.memory_dir).with_suffix("").as_posix() for path in destinations]
 
     def _find_existing(
         self,

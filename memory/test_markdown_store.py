@@ -26,7 +26,11 @@ from markdown_store import (
 
 
 def _non_index_files(memory_dir: Path) -> list[Path]:
-    return [p for p in memory_dir.glob("*.md") if p.name != INDEX_FILENAME]
+    return [
+        p
+        for p in memory_dir.rglob("*.md")
+        if p.name != INDEX_FILENAME and ARCHIVE_DIRNAME not in p.relative_to(memory_dir).parts
+    ]
 
 
 def _all_memory_files(memory_dir: Path) -> list[Path]:
@@ -104,23 +108,23 @@ class TestCanonicalMemoryId(unittest.TestCase):
 
     def test_typical_user_default_entity_omits_entity_from_slug(self):
         generated = canonical_memory_id("user", "default", "preferred_editor", "global", None)
-        self.assertEqual(generated, "preferred-editor")
+        self.assertEqual(generated, "global/preferred-editor")
 
     def test_non_typical_entity_type_prefixes_entity_in_slug(self):
         generated = canonical_memory_id("project", "lab-web", "api_routing_design", "global", None)
-        self.assertTrue(generated.startswith("project-lab-web-"))
+        self.assertTrue(generated.startswith("global/project-lab-web-"))
 
     def test_non_typical_entity_id_prefixes_entity_in_slug(self):
         generated = canonical_memory_id("user", "someone-else", "preferred_editor", "global", None)
-        self.assertTrue(generated.startswith("user-someone-else-"))
+        self.assertTrue(generated.startswith("global/user-someone-else-"))
 
-    def test_global_scope_has_no_directory_prefix(self):
+    def test_global_scope_is_placed_under_global_directory(self):
         generated = canonical_memory_id("user", "default", "preferred_editor", "global", None)
-        self.assertNotIn("/", generated)
+        self.assertEqual(generated, "global/preferred-editor")
 
 
 class TestCanonicalMemoryIdDirectoryLayout(unittest.TestCase):
-    """canonical_memory_id() groups non-global scopes into their own subdirectory."""
+    """canonical_memory_id() always groups memories into a scope subdirectory."""
 
     def test_project_scope_places_id_under_projects_directory(self):
         generated = canonical_memory_id(
@@ -243,6 +247,20 @@ class TestMarkdownMemoryStoreWriteRead(MarkdownMemoryStoreTestBase):
         self.assertEqual(fetched["created"], created["created"])
         self.assertEqual(fetched["updated"], created["updated"])
 
+    def test_read_normalizes_unquoted_yaml_dates_to_strings(self):
+        path = self.vault_dir / "memory" / "global" / "legacy-memory.md"
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            "---\ntype: profile\ncreated: 2026-01-01\nupdated: 2026-08-06\n---\n\n"
+            "# Legacy Memory\n\n過去形式のメモリ\n",
+            encoding="utf-8",
+        )
+
+        fetched = self.store.read("global/legacy-memory")
+
+        self.assertEqual(fetched["created"], "2026-01-01")
+        self.assertEqual(fetched["updated"], "2026-08-06")
+
     def test_frontmatter_only_contains_type_created_and_updated(self):
         created = self._upsert()
         path = self.store._path_for_id(created["id"])
@@ -310,11 +328,14 @@ class TestMarkdownMemoryStoreFilenames(MarkdownMemoryStoreTestBase):
     def test_id_and_filename_stem_match(self):
         created = self._upsert()
         files = _non_index_files(self.vault_dir / "memory")
-        self.assertEqual(files[0].stem, created["id"])
+        self.assertEqual(
+            files[0].relative_to(self.vault_dir / "memory").with_suffix("").as_posix(),
+            created["id"],
+        )
 
     def test_typical_entity_omits_entity_from_filename(self):
         created = self._upsert(entity_type="user", entity_id="default", scope="global")
-        self.assertEqual(created["id"], "preferred-editor")
+        self.assertEqual(created["id"], "global/preferred-editor")
 
     def test_non_typical_entity_includes_entity_in_filename(self):
         created = self._upsert(
@@ -325,14 +346,14 @@ class TestMarkdownMemoryStoreFilenames(MarkdownMemoryStoreTestBase):
             project_id=None,
             summary="APIルーティング方針: REST",
         )
-        self.assertTrue(created["id"].startswith("project-lab-web-api-routing-design"))
+        self.assertTrue(created["id"].startswith("global/project-lab-web-api-routing-design"))
 
     def test_colliding_slug_falls_back_to_numbered_suffix(self):
         # Pre-occupy the slug this upsert would otherwise deterministically pick,
         # simulating an unrelated pre-existing record with the same candidate slug.
         self.store.write(
             {
-                "id": "preferred-editor",
+                "id": "global/preferred-editor",
                 "type": "profile",
                 "created": "2020-01-01",
                 "updated": "2020-01-01",
@@ -343,17 +364,17 @@ class TestMarkdownMemoryStoreFilenames(MarkdownMemoryStoreTestBase):
         )
 
         created = self._upsert()
-        self.assertEqual(created["id"], "preferred-editor-2")
+        self.assertEqual(created["id"], "global/preferred-editor-2")
 
 
 class TestMarkdownMemoryStoreDirectoryLayout(MarkdownMemoryStoreTestBase):
     """upsert_from_observation() groups files into subdirectories by scope."""
 
-    def test_global_scope_is_placed_directly_under_memory_dir(self):
+    def test_global_scope_is_placed_under_global_subdirectory(self):
         created = self._upsert(scope="global", project_id=None)
 
         path = self.store._path_for_id(created["id"])
-        self.assertEqual(path.parent, self.vault_dir / "memory")
+        self.assertEqual(path.parent, self.vault_dir / "memory" / "global")
 
     def test_project_scope_is_placed_under_projects_subdirectory(self):
         created = self._upsert(
@@ -428,6 +449,29 @@ class TestMarkdownMemoryStoreDirectoryLayout(MarkdownMemoryStoreTestBase):
         )
 
         self.assertEqual(first["id"], second["id"])
+
+
+class TestLegacyRootLayoutMigration(MarkdownMemoryStoreTestBase):
+    def test_moves_legacy_root_memory_into_global_directory_and_refreshes_index(self):
+        legacy_path = self.vault_dir / "memory" / "preferred-editor.md"
+        self.store.write(
+            {
+                "id": "preferred-editor",
+                "type": "profile",
+                "created": "2026-08-06",
+                "updated": "2026-08-06",
+                "title": "Preferred Editor",
+                "summary": "好みのエディタ: Neovim",
+                "history": [],
+            }
+        )
+
+        moved = self.store.migrate_legacy_root_memories()
+
+        self.assertEqual(moved, ["global/preferred-editor"])
+        self.assertFalse(legacy_path.exists())
+        self.assertTrue((self.vault_dir / "memory" / "global" / "preferred-editor.md").exists())
+        self.assertIn("global/preferred-editor.md", (self.vault_dir / "memory" / INDEX_FILENAME).read_text())
         self.assertEqual(len(_all_memory_files(self.vault_dir / "memory")), 1)
 
 
