@@ -1,13 +1,15 @@
 # Claude Code のグローバル設定との対応:
-# - acceptEdits → :workspace 継承の project-edit + on-request
 # - language/outputStyle → AGENTS.md の日本語・説明的な応答方針
 # - CLAUDE.md → プロジェクト指示のフォールバック名
-approval_policy = "on-request"
-default_permissions = "project-edit"
+approval_policy = "never"
+sandbox_mode = "workspace-write"
 project_doc_fallback_filenames = ["CLAUDE.md"]
 project_doc_max_bytes = 65536
 model_verbosity = "medium"
 vim_mode_default = true
+
+[sandbox_workspace_write]
+network_access = true
 
 [permissions.project-edit]
 description = "Workspace editing with Claude-compatible secret-file denials"
