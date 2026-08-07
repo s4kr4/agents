@@ -5,6 +5,7 @@ input=$(cat)
 
 repo_root="${HOME}/.agents"
 memory_cli="${repo_root}/memory/memory.py"
+run_python="${repo_root}/memory/run-python.sh"
 
 session_id=$(printf '%s' "$input" | jq -r '.session_id // empty')
 cwd=$(printf '%s' "$input" | jq -r '.cwd // ""')
@@ -58,14 +59,14 @@ summary_text=$(jq -rs '
 
 # 直接 local/Vault への書き込みを試み、失敗したら queue にフォールバック
 {
-  python3 "$memory_cli" start-session \
+  "$run_python" "$memory_cli" start-session \
     --session-id "$session_id" \
     --client "claude-code" \
     --user-id "default" \
     --project-id "$project_id" >/dev/null 2>&1 &&
 
   if [ -n "$last_user_text" ]; then
-    python3 "$memory_cli" append-event \
+    "$run_python" "$memory_cli" append-event \
       --session-id "$session_id" \
       --client "claude-code" \
       --user-id "default" \
@@ -76,7 +77,7 @@ summary_text=$(jq -rs '
   fi &&
 
   if [ -n "$last_assistant_text" ]; then
-    python3 "$memory_cli" append-event \
+    "$run_python" "$memory_cli" append-event \
       --session-id "$session_id" \
       --client "claude-code" \
       --user-id "default" \
@@ -86,7 +87,7 @@ summary_text=$(jq -rs '
       --content "$last_assistant_text" >/dev/null 2>&1
   fi &&
 
-  python3 "$memory_cli" end-session \
+  "$run_python" "$memory_cli" end-session \
     --session-id "$session_id" \
     --summary "${summary_text:-session:${session_id}}" \
     --append-summary-event \
@@ -94,7 +95,7 @@ summary_text=$(jq -rs '
     --consolidate >/dev/null 2>&1
 } || {
   # local/Vault への書き込み失敗 → ファイルキューにフォールバック
-  python3 "$memory_cli" queue-session \
+  "$run_python" "$memory_cli" queue-session \
     --session-id "$session_id" \
     --client "claude-code" \
     --user-id "default" \

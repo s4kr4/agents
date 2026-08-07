@@ -28,6 +28,7 @@ description: 複数の LLM 実行環境で共有するローカルメモリ基�
 - `memory/markdown_store.py`（Vault: memories の読み書き）
 - `memory/local_store.py`（local: sessions/events/observations/監査ログ）
 - `memory/migrate_sqlite_to_markdown.py`（旧 SQLite からの一括移行、dry-run 既定）
+- `memory/run-python.sh`（PyYAML が import できる Python を解決して `memory.py` を実行するラッパー。`python3` 直呼びはしない）
 - `memory/hook-stop-memory.sh`
 - `memory/codex-memory-start.sh`
 - `memory/codex-memory-log.sh`
@@ -99,41 +100,41 @@ description: 複数の LLM 実行環境で共有するローカルメモリ基�
 DB 初期化:
 
 ```bash
-python3 memory/memory.py init-db
+memory/run-python.sh memory/memory.py init-db
 ```
 
 現行コンテキスト取得:
 
 ```bash
-python3 memory/memory.py get-context --user-id default --project-id my-project
+memory/run-python.sh memory/memory.py get-context --user-id default --project-id my-project
 ```
 
 現行記憶検索:
 
 ```bash
-python3 memory/memory.py search --project-id my-project --query 'keyword'
+memory/run-python.sh memory/memory.py search --project-id my-project --query 'keyword'
 ```
 
 履歴横断検索:
 
 ```bash
-python3 memory/memory.py history --project-id my-project --query 'decision background'
-python3 memory/memory.py history --project-id my-project --query 'keyword' --no-events
-python3 memory/memory.py history --project-id my-project --query 'keyword' --no-memories --limit 5
+memory/run-python.sh memory/memory.py history --project-id my-project --query 'decision background'
+memory/run-python.sh memory/memory.py history --project-id my-project --query 'keyword' --no-events
+memory/run-python.sh memory/memory.py history --project-id my-project --query 'keyword' --no-memories --limit 5
 ```
 
 手動で保存フローを動かす例:
 
 ```bash
-python3 memory/memory.py start-session --client codex --user-id default --project-id my-project --session-id demo
-python3 memory/memory.py append-event --session-id demo --client codex --user-id default --project-id my-project --role user --kind message --content 'Respond in Japanese.'
-python3 memory/memory.py end-session --session-id demo --append-summary-event --extract --consolidate
+memory/run-python.sh memory/memory.py start-session --client codex --user-id default --project-id my-project --session-id demo
+memory/run-python.sh memory/memory.py append-event --session-id demo --client codex --user-id default --project-id my-project --role user --kind message --content 'Respond in Japanese.'
+memory/run-python.sh memory/memory.py end-session --session-id demo --append-summary-event --extract --consolidate
 ```
 
 キューベースの保存（DB 書き込み不可時）:
 
 ```bash
-python3 memory/memory.py queue-session \
+memory/run-python.sh memory/memory.py queue-session \
   --session-id demo \
   --client claude-code \
   --user-id default \
@@ -146,7 +147,7 @@ python3 memory/memory.py queue-session \
 キューの flush:
 
 ```bash
-python3 memory/memory.py flush-queue
+memory/run-python.sh memory/memory.py flush-queue
 ```
 
 ## 調査の進め方

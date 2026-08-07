@@ -22,16 +22,16 @@ sync-skills-codex-dry:
 	@bash $(AGENTSPATH)/scripts/sync-claude-codex-skills.sh --from codex --dry-run
 
 memory-init:
-	@python3 $(AGENTSPATH)/memory/memory.py init-db
+	@$(AGENTSPATH)/memory/run-python.sh $(AGENTSPATH)/memory/memory.py init-db
 
 memory-demo:
-	@python3 $(AGENTSPATH)/memory/memory.py init-db
-	@python3 $(AGENTSPATH)/memory/memory.py start-session --client codex --user-id default --project-id agents --session-id demo
-	@python3 $(AGENTSPATH)/memory/memory.py append-event --session-id demo --client codex --user-id default --project-id agents --role user --kind message --content '応答は日本語で行ってください'
-	@python3 $(AGENTSPATH)/memory/memory.py extract --session-id demo
-	@python3 $(AGENTSPATH)/memory/memory.py consolidate --entity-id default
-	@python3 $(AGENTSPATH)/memory/memory.py get-context --user-id default --project-id agents
-	@python3 $(AGENTSPATH)/memory/memory.py end-session --session-id demo --append-summary-event
+	@$(AGENTSPATH)/memory/run-python.sh $(AGENTSPATH)/memory/memory.py init-db
+	@$(AGENTSPATH)/memory/run-python.sh $(AGENTSPATH)/memory/memory.py start-session --client codex --user-id default --project-id agents --session-id demo
+	@$(AGENTSPATH)/memory/run-python.sh $(AGENTSPATH)/memory/memory.py append-event --session-id demo --client codex --user-id default --project-id agents --role user --kind message --content '応答は日本語で行ってください'
+	@$(AGENTSPATH)/memory/run-python.sh $(AGENTSPATH)/memory/memory.py extract --session-id demo
+	@$(AGENTSPATH)/memory/run-python.sh $(AGENTSPATH)/memory/memory.py consolidate --entity-id default
+	@$(AGENTSPATH)/memory/run-python.sh $(AGENTSPATH)/memory/memory.py get-context --user-id default --project-id agents
+	@$(AGENTSPATH)/memory/run-python.sh $(AGENTSPATH)/memory/memory.py end-session --session-id demo --append-summary-event
 
 help:
 	@echo "Usage:"

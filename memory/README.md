@@ -58,18 +58,28 @@ Codex 側は `codex-memory-run.sh` 経由でセッション終了時に自動実
 | `local_store.py` | `LocalPipelineStore`。local層（sessions/events/observations/logs）の読み書きを担当 |
 | `migrate_sqlite_to_markdown.py` | 旧SQLiteからの一括移行スクリプト。dry-run が既定で `--apply` で実際に書き込む。冪等 |
 | `test_*.py` | unittest ベースのテストスイート |
+| `run-python.sh` | PyYAML が import できる Python で引数をそのまま実行するラッパー。`memory.py` の唯一のサードパーティ依存が PyYAML であり、システムの `python3` に入っていない環境でも動くように、`LLM_MEMORY_PYTHON` → システム `python3` → `uv` → `mise x uv` の順で解決する |
 | `codex-memory-run.sh` / `codex-memory-start.sh` / `codex-memory-stop.sh` / `codex-memory-log.sh` | `codex` コマンドをラップし、セッション開始時に `start-session`、終了時（trap EXIT）に `end-session --extract --consolidate` を自動実行する |
 | `hook-stop-memory.sh` | Claude Code の Stop hook 用スクリプト。現状 `.claude/settings.json` に未配線で自動実行されない。Claude Code 側は `/shared-memory` スキル経由の手動判断による読み書きが基本 |
 | `llm-shared-memory-design.md` | 設計ドキュメント。SQLite採用の経緯、後にファイルベースへ移行した理由の記録を含む |
 
+## 依存関係
+
+`memory.py` の唯一のサードパーティ依存は PyYAML（`markdown_store.py` が使用）です。システムの `python3` に PyYAML が入っていない環境（このリポジトリでは既定の macOS `python3` がそれに該当）でも動くよう、`memory.py` を直接 `python3` で呼ぶのではなく `memory/run-python.sh` 経由で呼び出してください。`run-python.sh` は以下の順で PyYAML が import できる Python を解決します:
+
+1. `LLM_MEMORY_PYTHON`（設定されていればそのまま使用）
+2. システムの `python3`（`import yaml` に成功する場合）
+3. `uv run --no-project --with pyyaml python3`
+4. `mise x uv -- uv run --no-project --with pyyaml python3`
+
 ## 使用例
 
 ```bash
-python3 memory/memory.py search --query "エディタ"
-python3 memory/memory.py get-context --user-id default --project-id my-project
-python3 memory/memory.py write-memory --session-id <id> --memory-type profile --key preferred_editor --summary "好みのエディタ: Neovim" --scope global
-python3 memory/memory.py forget --memory-id <id> --reason "古くなったため"
-python3 memory/memory.py migrate-layout
+memory/run-python.sh memory/memory.py search --query "エディタ"
+memory/run-python.sh memory/memory.py get-context --user-id default --project-id my-project
+memory/run-python.sh memory/memory.py write-memory --session-id <id> --memory-type profile --key preferred_editor --summary "好みのエディタ: Neovim" --scope global
+memory/run-python.sh memory/memory.py forget --memory-id <id> --reason "古くなったため"
+memory/run-python.sh memory/memory.py migrate-layout
 ```
 
 `migrate-layout` は旧形式の `memory/<key>.md` を `memory/global/<key>.md` へ安全に移す一回限りの移行コマンドです。移動先に同名ファイルがある場合は上書きせずエラーにします。
@@ -77,7 +87,7 @@ python3 memory/memory.py migrate-layout
 ## テスト
 
 ```bash
-python3 -m unittest discover -s memory -p "test_*.py"
+memory/run-python.sh -m unittest discover -s memory -p "test_*.py"
 ```
 
 ## 関連スキル
