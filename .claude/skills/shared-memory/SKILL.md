@@ -13,7 +13,7 @@ Claude Code と Codex の間で共有するローカル記憶を、必要と判�
 
 - Vault（memories・Syncthing 同期対象）: `$LLM_MEMORY_VAULT/memory/`（未設定時は `~/.agents/memory/vault/` にフォールバック）
 - local（sessions/events/observations・同期対象外）: `$LLM_MEMORY_LOCAL_DIR`（既定 `~/.agents/memory/local/`）
-- CLI: `python3 ~/.agents/memory/memory.py`
+- CLI: `~/.agents/memory/run-python.sh ~/.agents/memory/memory.py`
 
 ## Vault の配置原則
 
@@ -27,12 +27,12 @@ Claude Code と Codex の間で共有するローカル記憶を、必要と判�
 
 ```bash
 # 1. セッションがなければ作成（初回のみ）
-python3 ~/.agents/memory/memory.py start-session \
+~/.agents/memory/run-python.sh ~/.agents/memory/memory.py start-session \
   --client claude-code --user-id default --project-id my-project \
   --session-id manual-$(date +%s)
 
 # 2. 記憶を書き込む
-python3 ~/.agents/memory/memory.py write-memory \
+~/.agents/memory/run-python.sh ~/.agents/memory/memory.py write-memory \
   --session-id manual-1234567890 \
   --memory-type profile \
   --key preferred_editor \
@@ -54,7 +54,7 @@ python3 ~/.agents/memory/memory.py write-memory \
 ### get-context（作業開始時の文脈取得）
 
 ```bash
-python3 ~/.agents/memory/memory.py get-context --user-id default --project-id my-project
+~/.agents/memory/run-python.sh ~/.agents/memory/memory.py get-context --user-id default --project-id my-project
 ```
 
 記憶を `feedback` / `profile` / `reference` に分類して返す（archive 済み = forget 済みの記憶は含まれない）。大きな作業に着手する前にまず実行する。
@@ -62,7 +62,7 @@ python3 ~/.agents/memory/memory.py get-context --user-id default --project-id my
 ### search（キーワード検索）
 
 ```bash
-python3 ~/.agents/memory/memory.py search --query 'vim' --project-id my-project
+~/.agents/memory/run-python.sh ~/.agents/memory/memory.py search --query 'vim' --project-id my-project
 ```
 
 archive 済み（forget 済み）を除いた現行の記憶のみが対象。`--memory-type` / `--scope` / `--entity-id` / `--limit` で絞り込み可能（`search --help` 参照）。
@@ -70,7 +70,7 @@ archive 済み（forget 済み）を除いた現行の記憶のみが対象。`-
 ### history（過去セッション横断検索）
 
 ```bash
-python3 ~/.agents/memory/memory.py history --query 'vim'
+~/.agents/memory/run-python.sh ~/.agents/memory/memory.py history --query 'vim'
 ```
 
 `memories` / `sessions` / `events` を横断して過去の経緯を掘る。`--no-memories` / `--no-sessions` / `--no-events` で対象を絞れる（`history --help` 参照）。
@@ -80,7 +80,7 @@ python3 ~/.agents/memory/memory.py history --query 'vim'
 ## 削除（forget）
 
 ```bash
-python3 ~/.agents/memory/memory.py forget --memory-id global/preferred-language-runtime --reason "ユーザー環境が変わったため"
+~/.agents/memory/run-python.sh ~/.agents/memory/memory.py forget --memory-id global/preferred-language-runtime --reason "ユーザー環境が変わったため"
 ```
 
 `--memory-id` と `--reason`（いずれも必須）を指定する。`--memory-id` は `mem_xxxx` のような不透明な ID ではなく、`search`/`get-context` が返す `id`（例: `global/preferred-language-runtime`、プロジェクトスコープなら `projects/<project_id>/<slug>`）をそのまま渡す。`forget` は記憶ファイルを削除するのではなく `memory/archive/` 配下へ移動するだけなので、`search`/`get-context`/`history` からは見えなくなるが、Vault 上には残り続ける。

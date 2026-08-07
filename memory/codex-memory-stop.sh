@@ -8,12 +8,13 @@ fi
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 memory_cli="${repo_root}/memory/memory.py"
+run_python="${repo_root}/memory/run-python.sh"
 
 session_id="$1"
 summary="${2:-}"
 
 cmd=(
-  python3 "${memory_cli}" end-session
+  "${run_python}" "${memory_cli}" end-session
   --session-id "${session_id}"
   --append-summary-event
   --extract

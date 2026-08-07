@@ -12,7 +12,7 @@ description: セッション履歴から意味記憶を抽出し Vault に保存
 ### 1. 未処理セッションを取得
 
 ```bash
-python3 memory/memory.py list-unextracted --limit 10
+memory/run-python.sh memory/memory.py list-unextracted --limit 10
 ```
 
 ### 2. 各セッションの summary を分析
@@ -32,7 +32,7 @@ python3 memory/memory.py list-unextracted --limit 10
 ### 3. 抽出した知識を書き込み
 
 ```bash
-python3 memory/memory.py write-memory \
+memory/run-python.sh memory/memory.py write-memory \
   --session-id SESSION_ID \
   --memory-type profile \
   --key "簡潔な英語キー" \
@@ -51,14 +51,14 @@ python3 memory/memory.py write-memory \
 ### 4. セッションを処理済みにマーク
 
 ```bash
-python3 memory/memory.py mark-extracted --session-id SESSION_ID
+memory/run-python.sh memory/memory.py mark-extracted --session-id SESSION_ID
 ```
 
 ### 5. 結果を確認
 
 ```bash
-python3 memory/memory.py search --query 'キーワード'
-python3 memory/memory.py get-context --user-id default --project-id default
+memory/run-python.sh memory/memory.py search --query 'キーワード'
+memory/run-python.sh memory/memory.py get-context --user-id default --project-id default
 ```
 
 ## 判断基準

@@ -8,6 +8,7 @@ fi
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 memory_cli="${repo_root}/memory/memory.py"
+run_python="${repo_root}/memory/run-python.sh"
 
 session_id="$1"
 role="$2"
@@ -19,7 +20,7 @@ project_id="${LLM_MEMORY_PROJECT_ID:-$(basename "${PWD}")}"
 user_id="${LLM_MEMORY_USER_ID:-default}"
 client="${LLM_MEMORY_CLIENT:-codex}"
 
-python3 "${memory_cli}" append-event \
+"${run_python}" "${memory_cli}" append-event \
   --session-id "${session_id}" \
   --client "${client}" \
   --user-id "${user_id}" \
