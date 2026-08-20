@@ -173,3 +173,4 @@ grep -l "Docker" ~/.claude/skills/linux-diag/cartes/*.md
 | xrdp-software-rendering.md | xrdp, GNOME, レンダリング, Mutter, 環境変数 |
 | xrdp-service-pidfile-timeout.md | xrdp, systemd, PIDFile, Type=forking, タイムアウト, ソースビルド |
 | docker-gpu-persistence.md | Docker, GPU, NVIDIA, Persistence Mode |
+| docker-gpu-driver-version-mismatch.md | Docker, GPU, NVIDIA, Driver/library version mismatch, nvidia-persistenced, カーネルモジュール |
