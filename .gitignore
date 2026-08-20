@@ -1,6 +1,7 @@
 .claude/settings.local.json
 .claude/skills/_tracker
 .claude/skills/*/feedback/
+.codex/skills/*/feedback/
 __pycache__/
 *.pyc
 memory/memory.db*
