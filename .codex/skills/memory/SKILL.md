@@ -17,7 +17,7 @@ description: 複数の LLM 実行環境で共有するローカルメモリ基�
 
 ファイルベースの 2 層構成。
 
-- **Vault**（`memories`、Syncthing 同期対象）: `$LLM_MEMORY_VAULT/memory/<id>.md`（frontmatter 付き Markdown、1 記憶 = 1 ファイル）。未設定時は `~/.agents/memory/vault/` にフォールバックし、stderr に警告を出す。
+- **Vault**（`memories`、Syncthing 同期対象）: `$LLM_MEMORY_VAULT/memory/`。直下の Markdown は `_index.md` のみで、各記憶は `global/`・`projects/`・`clients/`・`temporary/` の分類ディレクトリ内に置く（frontmatter 付き Markdown、1 記憶 = 1 ファイル）。未設定時は `~/.agents/memory/vault/` にフォールバックし、stderr に警告を出す。
 - **local**（`sessions`/`events`/`observations`/監査ログ、同期対象外）: `$LLM_MEMORY_LOCAL_DIR`（既定 `~/.agents/memory/local/`）。
 
 `--db` フラグは deprecated no-op（受理するが無視）。既存ラッパーとの互換用に残している。
