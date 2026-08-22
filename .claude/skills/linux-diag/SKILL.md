@@ -1,12 +1,13 @@
 ---
 name: linux-diag
 description: Linux系OSのシステム不具合診断スキル。システムが遅い、応答しない、エラーが発生する等の問題調査時に使用。CPU、メモリ、ディスク、ネットワーク、プロセス、サービス、ログ、GPU/NVIDIA、グラフィック/xrdp、Docker/コンテナの診断コマンドとフローチャートを提供。
-compatibility: Linux only. Requires systemctl, journalctl, ss, lsblk, etc.
 ---
 
 # Linux System Diagnostics Skill
 
 Linux系OSのシステム不具合を調査・診断するための知識ベースです。
+
+Linux 専用。`systemctl`、`journalctl`、`ss`、`lsblk` などを利用できる環境を前提とする。
 
 ## 概要
 
@@ -153,24 +154,31 @@ journalctl -p err -n 20   # エラーログ（systemd環境）
 - [COMMANDS.md](references/COMMANDS.md) - コマンド詳細リファレンス
 - [FLOWCHART.md](references/FLOWCHART.md) - 診断フローチャート
 
-## 調査カルテ（cartes/）
+## 調査カルテ（共有メモリ）
 
-過去の調査事例を個別ファイルで管理。症状に応じて関連カルテを検索して参照。
+過去の調査事例は、Claude Code / Codex の両方から参照できる共有メモリで管理する。ローカルの `cartes/` ディレクトリには保存しない。
+
+カルテを参照・作成・更新する場合は `shared-memory` スキルを読み、次の固定分類を使う。
+
+- scope: `project`
+- project ID: `linux-diag`
+- memory type: `reference`
+- entity type / ID: `project` / `linux-diag`
+- key: カルテ名の kebab-case（例: `xrdp-drm-permission`）
+- summary: 症状、環境、調査過程、根本原因、解決策、学んだことを含むカルテ本文
 
 ```bash
-# カルテ一覧
-ls ~/.claude/skills/linux-diag/cartes/
-
-# キーワードでカルテを検索
-grep -l "xrdp" ~/.claude/skills/linux-diag/cartes/*.md
-grep -l "GPU" ~/.claude/skills/linux-diag/cartes/*.md
-grep -l "Docker" ~/.claude/skills/linux-diag/cartes/*.md
+# 関連カルテを検索（global メモリを混ぜない）
+~/.agents/memory/run-python.sh ~/.agents/memory/memory.py search \
+  --query 'xrdp' --project-id linux-diag --scope project
 ```
 
-| カルテ | タグ |
+診断開始時は症状のキーワードで検索する。診断完了時は、今後も再利用できる確認済みの知見であれば `write-memory` で保存する。同じ key を使うと既存カルテの更新になるため、更新前に必ず `search` で既存内容を確認する。
+
+| カルテ key | タグ |
 |-------|------|
-| xrdp-drm-permission.md | xrdp, DRM, video, render, 権限 |
-| xrdp-software-rendering.md | xrdp, GNOME, レンダリング, Mutter, 環境変数 |
-| xrdp-service-pidfile-timeout.md | xrdp, systemd, PIDFile, Type=forking, タイムアウト, ソースビルド |
-| docker-gpu-persistence.md | Docker, GPU, NVIDIA, Persistence Mode |
-| docker-gpu-driver-version-mismatch.md | Docker, GPU, NVIDIA, Driver/library version mismatch, nvidia-persistenced, カーネルモジュール |
+| xrdp-drm-permission | xrdp, DRM, video, render, 権限 |
+| xrdp-software-rendering | xrdp, GNOME, レンダリング, Mutter, 環境変数 |
+| xrdp-service-pidfile-timeout | xrdp, systemd, PIDFile, Type=forking, タイムアウト, ソースビルド |
+| docker-gpu-persistence | Docker, GPU, NVIDIA, Persistence Mode |
+| docker-gpu-driver-version-mismatch | Docker, GPU, NVIDIA, Driver/library version mismatch, nvidia-persistenced, カーネルモジュール |
