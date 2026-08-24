@@ -48,7 +48,7 @@
       "Edit(**/secrets/**)"
     ],
     "ask": [],
-    "defaultMode": "acceptEdits"
+    "defaultMode": "auto"
   },
   "hooks": {
     "PostToolUse": [
