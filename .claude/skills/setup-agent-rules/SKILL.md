@@ -39,9 +39,10 @@ python scripts/setup_agent_rules.py validate --project /path/to/project
 
 ## 安全性
 
-- 既存の `AGENTS.md` と `CLAUDE.md` を保持し、管理ブロックだけを追記する。
+- 既存の `AGENTS.md` と `CLAUDE.md` を保持し、必要な参照がない場合だけ末尾へ通常の Markdown として追記する。
+- `AGENTS.md` は `docs/rules/INDEX.md` への参照、`CLAUDE.md` は独立した行の `@AGENTS.md` を内容ベースで検出し、重複して追記しない。
+- 既存の同名見出しや周辺の文書は置換・削除しない。初期化と構成検証だけを行い、追記後の内容を自動管理しない。
 - `.claude/rules` が期待どおりの相対リンクでなければ停止する。ファイル、実ディレクトリ、別リンクを置換しない。
-- 管理ブロックが途中で壊れていれば停止し、手作業での確認を求める。
 - `docs/rules/INDEX.md` が既にあれば変更しない。
 - 実行後に差分を確認し、既存ルールとの優先順位や重複を報告する。
 

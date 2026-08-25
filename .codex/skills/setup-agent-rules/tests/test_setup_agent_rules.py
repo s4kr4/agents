@@ -186,70 +186,58 @@ class SetupAgentRulesCliTest(unittest.TestCase):
                 result = self.run_cli(project, "validate")
                 self.assertNotEqual(result.returncode, 0)
 
-    def test_validate_rejects_invalid_managed_markers(self) -> None:
-        invalid_contents = (
-            "<!-- setup-agent-rules:start -->\ndocs/rules/INDEX.md\n",
-            "<!-- setup-agent-rules:end -->\ndocs/rules/INDEX.md\n",
-            "<!-- setup-agent-rules:start -->\n<!-- setup-agent-rules:start -->\n"
-            "docs/rules/INDEX.md\n<!-- setup-agent-rules:end -->\n",
-            "<!-- setup-agent-rules:end -->\ndocs/rules/INDEX.md\n"
-            "<!-- setup-agent-rules:start -->\n",
-        )
-        for content in invalid_contents:
-            with self.subTest(content=content), tempfile.TemporaryDirectory() as directory:
-                project = Path(directory)
-                self.initialize_valid_project(project)
-                (project / "AGENTS.md").write_text(content, encoding="utf-8")
-                validation = self.run_cli(project, "validate")
-                initialization = self.run_cli(project, "init")
-                self.assertNotEqual(validation.returncode, 0)
-                self.assertNotEqual(initialization.returncode, 0)
+    def test_init_recognizes_existing_references_without_rewriting_files(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            project = Path(temporary_directory)
+            agents_content = (
+                "# Existing agents\n\n"
+                "See `docs/rules/INDEX.md` before starting work.\n"
+            )
+            claude_content = "# Existing Claude\n\n@AGENTS.md\n"
+            (project / "AGENTS.md").write_text(agents_content, encoding="utf-8")
+            (project / "CLAUDE.md").write_text(claude_content, encoding="utf-8")
 
-    def test_validate_requires_instruction_inside_managed_block(self) -> None:
+            result = self.run_cli(project, "init")
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                (project / "AGENTS.md").read_text(encoding="utf-8"), agents_content
+            )
+            self.assertEqual(
+                (project / "CLAUDE.md").read_text(encoding="utf-8"), claude_content
+            )
+
+    def test_validate_accepts_content_based_references(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             project = Path(temporary_directory)
             self.initialize_valid_project(project)
             (project / "AGENTS.md").write_text(
-                "docs/rules/INDEX.md\n"
-                "<!-- setup-agent-rules:start -->\n"
-                "instruction missing here\n"
-                "<!-- setup-agent-rules:end -->\n",
+                "See `docs/rules/INDEX.md` before starting work.\n",
                 encoding="utf-8",
             )
-            result = self.run_cli(project, "validate")
-            self.assertNotEqual(result.returncode, 0)
+            (project / "CLAUDE.md").write_text("@AGENTS.md\n", encoding="utf-8")
 
-    def test_init_rejects_managed_block_without_required_instruction(self) -> None:
-        cases = (
-            ("AGENTS.md", "# Existing agents\n"),
-            ("CLAUDE.md", "# Existing Claude\n"),
-        )
-        invalid_block = (
-            "<!-- setup-agent-rules:start -->\n"
-            "required instruction is missing\n"
-            "<!-- setup-agent-rules:end -->\n"
-        )
-        for filename, other_content in cases:
-            with self.subTest(filename=filename), tempfile.TemporaryDirectory() as directory:
-                project = Path(directory)
-                other_filename = "CLAUDE.md" if filename == "AGENTS.md" else "AGENTS.md"
-                invalid_path = project / filename
-                other_path = project / other_filename
-                invalid_path.write_text(invalid_block, encoding="utf-8")
-                other_path.write_text(other_content, encoding="utf-8")
-                before = {
-                    filename: invalid_path.read_text(encoding="utf-8"),
-                    other_filename: other_path.read_text(encoding="utf-8"),
-                }
-                result = self.run_cli(project, "init")
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn("競合", result.stderr)
-                self.assertEqual(invalid_path.read_text(encoding="utf-8"), before[filename])
-                self.assertEqual(
-                    other_path.read_text(encoding="utf-8"), before[other_filename]
-                )
-                self.assertFalse((project / "docs").exists())
-                self.assertFalse((project / ".claude").exists())
+            result = self.run_cli(project, "validate")
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_claude_reference_must_be_a_standalone_line(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            project = Path(temporary_directory)
+            (project / "CLAUDE.md").write_text(
+                "The text @AGENTS.md is only an example.\n", encoding="utf-8"
+            )
+
+            result = self.run_cli(project, "init")
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                (project / "CLAUDE.md")
+                .read_text(encoding="utf-8")
+                .splitlines()
+                .count("@AGENTS.md"),
+                1,
+            )
 
 
 if __name__ == "__main__":

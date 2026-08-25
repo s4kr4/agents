@@ -9,22 +9,15 @@ from pathlib import Path
 
 
 EXPECTED_LINK = Path("../docs/rules")
-START_MARKER = "<!-- setup-agent-rules:start -->"
-END_MARKER = "<!-- setup-agent-rules:end -->"
 
-AGENTS_BLOCK = f"""{START_MARKER}
-## プロジェクトルール
+AGENTS_CONTENT = """## プロジェクトルール
 
 作業を開始する前に `docs/rules/INDEX.md` を確認すること。
 INDEX に記載されたルールのうち、現在のタスクおよび変更対象ファイルに
 該当するものを読み、その指示に従うこと。
-{END_MARKER}
 """
 
-CLAUDE_BLOCK = f"""{START_MARKER}
-@AGENTS.md
-{END_MARKER}
-"""
+CLAUDE_CONTENT = "@AGENTS.md\n"
 
 INDEX_CONTENT = """# プロジェクトルール
 
@@ -55,23 +48,10 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def extract_managed_block(content: str, path: Path) -> str | None:
-    """一意かつ正順な管理ブロックを抽出する。"""
-    start_count = content.count(START_MARKER)
-    end_count = content.count(END_MARKER)
-    if start_count == 0 and end_count == 0:
-        return None
-    if start_count != 1 or end_count != 1:
-        raise SetupError(f"競合: {path} の管理マーカーは各1個である必要があります")
-    start = content.index(START_MARKER)
-    end = content.index(END_MARKER)
-    if start >= end:
-        raise SetupError(f"競合: {path} の管理マーカーの順序が不正です")
-    return content[start + len(START_MARKER) : end]
-
-
-def inspect_managed_block(path: Path, required: str) -> bool:
-    """管理ブロックの有無を返し、壊れたマーカーは拒否する。"""
+def contains_required_reference(
+    path: Path, required: str, *, standalone_line: bool = False
+) -> bool:
+    """ファイルを安全に検査し、必要な参照の有無を返す。"""
     if path.is_symlink():
         raise SetupError(f"競合: {path} はシンボリックリンクです")
     if not path.exists():
@@ -79,10 +59,9 @@ def inspect_managed_block(path: Path, required: str) -> bool:
     if not path.is_file():
         raise SetupError(f"競合: {path} は通常ファイルではありません")
     content = path.read_text(encoding="utf-8")
-    block = extract_managed_block(content, path)
-    if block is not None and required not in block:
-        raise SetupError(f"競合: {path} の管理ブロックに必須指示がありません")
-    return block is not None
+    if standalone_line:
+        return any(line.strip() == required for line in content.splitlines())
+    return required in content
 
 
 def preflight(project: Path) -> tuple[bool, bool]:
@@ -117,26 +96,28 @@ def preflight(project: Path) -> tuple[bool, bool]:
             )
     elif rules_link.exists():
         raise SetupError(f"競合: {rules_link} が既に存在します。置換しません")
-    agents_managed = inspect_managed_block(
+    agents_configured = contains_required_reference(
         project / "AGENTS.md", "docs/rules/INDEX.md"
     )
-    claude_managed = inspect_managed_block(project / "CLAUDE.md", "@AGENTS.md")
-    return agents_managed, claude_managed
+    claude_configured = contains_required_reference(
+        project / "CLAUDE.md", "@AGENTS.md", standalone_line=True
+    )
+    return agents_configured, claude_configured
 
 
-def append_block(path: Path, block: str) -> None:
-    """既存内容を維持し、区切りを整えて管理ブロックを追記する。"""
+def append_content(path: Path, additional_content: str) -> None:
+    """既存内容を維持し、区切りを整えて内容を追記する。"""
     content = path.read_text(encoding="utf-8") if path.exists() else ""
     if content and not content.endswith("\n"):
         content += "\n"
     if content:
         content += "\n"
-    path.write_text(content + block, encoding="utf-8")
+    path.write_text(content + additional_content, encoding="utf-8")
 
 
 def initialize(project: Path) -> None:
     """競合がない場合だけ共通ルール配置を初期化する。"""
-    agents_managed, claude_managed = preflight(project)
+    agents_configured, claude_configured = preflight(project)
     rules_directory = project / "docs/rules"
     rules_directory.mkdir(parents=True, exist_ok=True)
     index = rules_directory / "INDEX.md"
@@ -148,10 +129,10 @@ def initialize(project: Path) -> None:
     rules_link = claude_directory / "rules"
     if not rules_link.is_symlink():
         rules_link.symlink_to(EXPECTED_LINK)
-    if not agents_managed:
-        append_block(project / "AGENTS.md", AGENTS_BLOCK)
-    if not claude_managed:
-        append_block(project / "CLAUDE.md", CLAUDE_BLOCK)
+    if not agents_configured:
+        append_content(project / "AGENTS.md", AGENTS_CONTENT)
+    if not claude_configured:
+        append_content(project / "CLAUDE.md", CLAUDE_CONTENT)
 
 
 def validation_errors(project: Path) -> list[str]:
@@ -166,18 +147,18 @@ def validation_errors(project: Path) -> list[str]:
         errors.append(f"不足: {rules_link} はシンボリックリンクではありません")
     elif rules_link.readlink() != EXPECTED_LINK:
         errors.append(f"不正: {rules_link} -> {rules_link.readlink()}")
-    for filename, required in (
-        ("AGENTS.md", "docs/rules/INDEX.md"),
-        ("CLAUDE.md", "@AGENTS.md"),
+    for filename, required, standalone_line in (
+        ("AGENTS.md", "docs/rules/INDEX.md", False),
+        ("CLAUDE.md", "@AGENTS.md", True),
     ):
         path = project / filename
         if not path.exists():
             errors.append(f"不足: {path}")
             continue
-        content = path.read_text(encoding="utf-8")
-        block = extract_managed_block(content, path)
-        if block is None or required not in block:
-            errors.append(f"不正: {path} に必要な管理ブロックがありません")
+        if not contains_required_reference(
+            path, required, standalone_line=standalone_line
+        ):
+            errors.append(f"不正: {path} に必要な参照がありません: {required}")
     return errors
 
 
