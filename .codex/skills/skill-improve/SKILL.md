@@ -22,7 +22,7 @@ description: スキルのフィードバックを分析してSKILL.mdを改善�
 
 **`$ARGUMENTS` が未指定の場合**: 自動スキャンモードで動作する。
 
-1. `{cwd}/.claude/skills/*/feedback/` と `~/.claude/skills/*/feedback/` の両方を走査し、`applied/` を除く `.md` ファイルを持つスキルを列挙する。両方に同名スキルの feedback が存在する場合は統合して1スキルとして扱う（FB件数は合算する）。ただし以下は走査・改善対象から除外する:
+1. `{cwd}/.claude/skills/*/feedback/` と `~/.claude/skills/*/feedback/` の両方を走査し、`processed/` を除く `.md` ファイルを持つスキルを列挙する。両方に同名スキルの feedback が存在する場合は統合して1スキルとして扱う（FB件数は合算する）。ただし以下は走査・改善対象から除外する:
    - スキル名にコロン (`:`) を含むスキル（plugin skill: `codex:setup` など）
    - `~/.claude/skills/<name>/SKILL.md` および `{cwd}/.claude/skills/<name>/SKILL.md` のいずれも存在しないスキル（Claude Code 組み込み skill: `update-config`, `review`, `init` など）
    - Stop フックが既にこれらをフィルタするため feedback ファイル自体が作られないはずだが、念のためドキュメントとして明示する
@@ -60,12 +60,14 @@ description: スキルのフィードバックを分析してSKILL.mdを改善�
 
 **フィードバックの読み込み先**:
 - プロジェクト側とグローバル側の両方の `feedback/` ディレクトリ（存在する方、両方あれば両方）を読み込む
-  - `{cwd}/.claude/skills/{target}/feedback/` 配下の全 `.md` ファイル（`applied/` サブディレクトリは除く）
-  - `~/.claude/skills/{target}/feedback/` 配下の全 `.md` ファイル（`applied/` サブディレクトリは除く）
+  - `{cwd}/.claude/skills/{target}/feedback/` 配下の全 `.md` ファイル（`processed/` サブディレクトリは除く）
+  - `~/.claude/skills/{target}/feedback/` 配下の全 `.md` ファイル（`processed/` サブディレクトリは除く）
 
 > **auto_generated ファイルの扱い**: `auto_generated: true` フィールドを持つファイルは Stop フックによる自動収集です。`has_signals: true` のファイルには不満シグナルやSkill呼び出し後のユーザー応答が含まれるため、分析対象とします。`has_signals: false` のファイルはメタデータのみなので分析対象から除外してください。
 >
 > **`source: orchestrator` ファイルの扱い**: `source: orchestrator` フィールドを持つファイルは、オーケストレーターがワークフローイベント発生時（development-workflow.md 参照）にその場で記録したものです。常に `has_signals: true` を持つため実質件数にカウントします。イベント種別・根本原因が構造化されているため、分析時は優先的に扱ってください。
+>
+> **誤検出シグナルの扱い**: `has_signals: true` でも、「不満・やり直しシグナル」欄の中身が `<task-notification>` タグやスキル本文の断片の転記であり、実際のユーザーの不満・訂正・やり直し指示を含まない場合がある（誤検出）。この場合は実質件数に数えず、分析の根拠にもしない。誤検出と判断したファイルは `feedback/processed/`（元のファイルがあった場所がプロジェクト側なら `{cwd}/.claude/skills/{target}/feedback/processed/`、グローバル側なら `~/.claude/skills/{target}/feedback/processed/`）に移動し、次回以降のスキャン対象から除外する。移動先ディレクトリが存在しない場合は作成し、ファイル名は変更しない。
 
 **tracker の読み込み先**（常にグローバルに集約されている）:
 - `~/.claude/skills/_tracker/usage.jsonl`（使用頻度・コンテキスト）
@@ -124,7 +126,7 @@ description: スキルのフィードバックを分析してSKILL.mdを改善�
 
 ### 7. フィードバックファイルの移動
 
-適用に使用したフィードバックファイルを、それぞれが存在していた `feedback/` ディレクトリ配下の `applied/` に移動する（プロジェクト側のファイルは `{cwd}/.claude/skills/{target}/feedback/applied/` へ、グローバル側のファイルは `~/.claude/skills/{target}/feedback/applied/` へ、元の場所を跨いで移動しない）。
+処理が完了したフィードバックファイル（適用に使用したもの・ステップ2で誤検出/無内容と判断して分析の根拠にしなかったもの、両方）を、それぞれが存在していた `feedback/` ディレクトリ配下の `processed/` に移動する（プロジェクト側のファイルは `{cwd}/.claude/skills/{target}/feedback/processed/` へ、グローバル側のファイルは `~/.claude/skills/{target}/feedback/processed/` へ、元の場所を跨いで移動しない）。理由の違い（変更に反映した／対応不要と判断した）は保存先を分けず、完了サマリー（ステップ8）の記述で区別する。
 
 - 移動先ディレクトリが存在しない場合は作成する
 - ファイル名は変更しない
@@ -134,7 +136,7 @@ description: スキルのフィードバックを分析してSKILL.mdを改善�
 以下の内容を含むサマリーを表示する。
 
 - 適用した変更の一覧（変更番号とセクション名）
-- 移動したフィードバックファイルの一覧
+- `processed/` へ移動したフィードバックファイルの一覧（変更に反映したもの／対応不要と判断したものを区別して記載）
 - 更新後の SKILL.md のパス
 
 自動スキャンモードの場合、全スキル完了後に全体サマリーも表示する:

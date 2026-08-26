@@ -1,0 +1,4 @@
+interface:
+  display_name: "Setup Agent Rules"
+  short_description: "ClaudeとCodexの共通ルールを安全に初期化・保守"
+  default_prompt: "Use $setup-agent-rules to initialize, validate, or maintain shared Claude and Codex project rules safely."
