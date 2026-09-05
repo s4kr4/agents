@@ -22,7 +22,8 @@
       "Bash(apt list *)",
       "Bash(docker compose *)",
       "Bash(git *)",
-      "Bash(playwright-cli *)"
+      "Bash(playwright-cli *)",
+      "mcp__shared-memory__*"
     ],
     "deny": [
       "Bash(sudo *)",
@@ -50,7 +51,9 @@
       "Edit(**/.env.!(example))",
       "Edit(**/secrets/**)"
     ],
-    "ask": [],
+    "ask": [
+      "mcp__shared-memory__forget"
+    ],
     "defaultMode": "auto"
   },
   "hooks": {
@@ -127,8 +130,10 @@
   "sandbox": {
     "enabled": false
   },
+  "theme": "dark-daltonized",
   "editorMode": "vim",
   "remoteControlAtStartup": true,
   "agentPushNotifEnabled": true,
-  "skipAutoPermissionPrompt": true
+  "skipAutoPermissionPrompt": true,
+  "model": "claude-fable-5-1[1m]"
 }
