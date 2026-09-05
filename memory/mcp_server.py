@@ -9,6 +9,7 @@ from typing import Annotated, Any, Literal
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
+from mcp.types import ToolAnnotations
 from pydantic import Field
 
 import memory
@@ -100,12 +101,12 @@ def create_server() -> FastMCP:
         info = client_params.clientInfo if client_params is not None else None
         return f"mcp:{info.name}" if info is not None and info.name else "mcp"
 
-    @server.tool()
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True))
     def get_context(project_id: str | None = None) -> dict[str, Any]:
         """現在の共有コンテキストを取得する。"""
         return call("get_context", project_id=project_id)
 
-    @server.tool()
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True))
     def search(
         query: str = "",
         memory_type: Literal["profile", "feedback", "reference"] | None = None,
@@ -125,7 +126,7 @@ def create_server() -> FastMCP:
             limit=limit,
         )
 
-    @server.tool()
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True))
     def history(
         query: str | None = None,
         project_id: str | None = None,
@@ -153,7 +154,7 @@ def create_server() -> FastMCP:
             include_events=include_events,
         )
 
-    @server.tool()
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False))
     def write_memory(
         key: str,
         summary: str,
@@ -214,19 +215,19 @@ def create_server() -> FastMCP:
             require_session=explicit_session,
         )
 
-    @server.tool()
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=True))
     def forget(memory_id: str, reason: str) -> dict[str, Any]:
         """指定した記憶をアーカイブする。"""
         return call("forget", memory_id=memory_id, reason=reason)
 
-    @server.tool()
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True))
     def list_unextracted(
         limit: Annotated[int, Field(strict=True, ge=1, le=100)] = 10,
     ) -> dict[str, Any]:
         """未処理セッションを一覧する。"""
         return call("list_unextracted", limit=limit)
 
-    @server.tool()
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True))
     def mark_extracted(session_id: str) -> dict[str, Any]:
         """指定したセッションを処理済みにする。"""
         return call("mark_extracted", session_id=session_id)

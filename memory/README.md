@@ -18,6 +18,8 @@ Codex、Claude Code、Claude Desktop など複数の LLM クライアントか�
 
 日常の読み書きは各端末で起動する `shared-memory` stdio MCP サーバーを使います。7 ツールは `get_context`、`search`、`history`、`write_memory`、`forget`、`list_unextracted`、`mark_extracted` です。CLI は初期化・移行・キュー・診断用にも維持します。
 
+各ツールには MCP の注釈（読み取り専用、冪等、破壊的操作）を付けています。Codex で共有メモリを自動実行する場合は `default_tools_approval_mode = "approve"` を使い、`forget` だけ `approval_mode = "prompt"` で上書きします。`forget` は破壊的操作として扱われます。
+
 これは各 OS・アプリからのアクセス経路を共通化する構成です。権限を一か所に集約するリモートサービスではありません。接続登録と各アプリの承認設定は必要です。Claude のクラウドコネクターへこの stdio サーバーを URL 登録することはできません。
 
 ### 1. uv と依存環境
@@ -34,11 +36,11 @@ MCP は `memory/pyproject.toml` と `uv.lock` の環境を使用します。旧 
 
 設定ファイルは Syncthing で同期しません。既定の探索先は以下です。
 
-| OS | 設定ファイル |
-| --- | --- |
-| Ubuntu・macOS | `$XDG_CONFIG_HOME/llm-memory/config.toml`、未設定時 `~/.config/llm-memory/config.toml` |
+| OS             | 設定ファイル                                                                            |
+| -------------- | --------------------------------------------------------------------------------------- |
+| Ubuntu・macOS  | `$XDG_CONFIG_HOME/llm-memory/config.toml`、未設定時 `~/.config/llm-memory/config.toml`  |
 | native Windows | `%APPDATA%/llm-memory/config.toml`、未設定時 `~/AppData/Roaming/llm-memory/config.toml` |
-| 任意の OS | `LLM_MEMORY_CONFIG` を指定した場合はそのファイル |
+| 任意の OS      | `LLM_MEMORY_CONFIG` を指定した場合はそのファイル                                        |
 
 Unix の例:
 
@@ -103,10 +105,27 @@ Codex は `~/.codex/config.toml` の既存の `[mcp_servers.shared-memory]` に�
 approval_policy = "on-request"
 
 [mcp_servers.shared-memory]
-default_tools_approval_mode = "auto"
+command = "/home/s4kr4/.local/bin/uv"
+args = [
+  "run",
+  "--locked",
+  "--project",
+  "/home/s4kr4/.agents/memory",
+  "/home/s4kr4/.agents/memory/mcp_server.py",
+]
+cwd = "/home/s4kr4/.agents/memory"
+default_tools_approval_mode = "approve"
+
+[mcp_servers.shared-memory.env]
+LLM_MEMORY_VAULT = "/mnt/d/s4kr4/Documents/Obsidian/hub"
+LLM_MEMORY_LOCAL_DIR = "/home/s4kr4/.agents/memory/local"
+LLM_MEMORY_QUEUE_DIR = "/home/s4kr4/.cache/llm-memory/queue"
+
+[mcp_servers.shared-memory.tools.forget]
+approval_mode = "prompt"
 ```
 
-同じセクションの `command` / `args` と `[mcp_servers.shared-memory.env]` に、端末の絶対パスを設定してください。`approval_policy = "never"` のままだと、承認対象になった MCP ツールを実行できません。
+上のパスは Unix / WSL の例です。端末ごとの実際の `uv`、リポジトリ、Vault、local、queue の絶対パスに置き換えてください。上の設定では共有メモリの読み取り・書き込みは自動実行され、`forget` だけ毎回承認を求めます。
 
 非機密の設定ファイルへ適用する場合は `--apply --config <対象ファイル>` を明示します。既存ファイルには `--non-secret-config` の申告も必要です。資格情報を含む設定をこのスクリプトで読み書きせず、生成結果をアプリ自身で登録してください。リンク先は暗黙に置換せず、必要なら実体ファイルを明示します。
 
@@ -114,12 +133,12 @@ default_tools_approval_mode = "auto"
 
 既存設定への適用では、生成器は環境変数・承認設定を変更しません。したがって、初回登録時は上記のクライアント固有コマンドまたはアプリの設定画面で環境変数と承認設定を登録し、生成器は command/args の更新に使います。
 
-| OS・ホスト | 対象ツール | 登録・確認 | 実機確認の扱い |
-| --- | --- | --- | --- |
-| Ubuntu / WSL | Claude Code、Codex CLI | 各 CLI に生成した stdio command/args を登録、ツール一覧を確認 | 自動試験と実クライアント確認は別。実機結果は実装計画に記録 |
-| Ubuntu | Codex / Claude Desktop | 対象版のローカル MCP 設定で登録 | GUI は未検証、対象版の対応確認が必要 |
-| macOS | Claude Code、Codex CLI / Desktop、Claude Desktop | 生成設定を各ホストへ登録 | macOS 実機は未検証 |
-| native Windows | 対応 CLI、Codex / Claude Desktop | PowerShell で生成、Windows 側ホストへ登録 | Windows 実機は未検証 |
+| OS・ホスト     | 対象ツール                                       | 登録・確認                                                    | 実機確認の扱い                                             |
+| -------------- | ------------------------------------------------ | ------------------------------------------------------------- | ---------------------------------------------------------- |
+| Ubuntu / WSL   | Claude Code、Codex CLI                           | 各 CLI に生成した stdio command/args を登録、ツール一覧を確認 | 自動試験と実クライアント確認は別。実機結果は実装計画に記録 |
+| Ubuntu         | Codex / Claude Desktop                           | 対象版のローカル MCP 設定で登録                               | GUI は未検証、対象版の対応確認が必要                       |
+| macOS          | Claude Code、Codex CLI / Desktop、Claude Desktop | 生成設定を各ホストへ登録                                      | macOS 実機は未検証                                         |
+| native Windows | 対応 CLI、Codex / Claude Desktop                 | PowerShell で生成、Windows 側ホストへ登録                     | Windows 実機は未検証                                       |
 
 Codex は同一ホストの CLI・IDE・Desktop で MCP 設定を共有します。[Codex MCP 資料](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)を参照してください。Claude Desktop の具体的な設定場所は対象版の[ローカル MCP 手順](https://support.claude.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop)で確認します。
 

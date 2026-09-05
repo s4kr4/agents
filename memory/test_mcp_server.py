@@ -79,6 +79,15 @@ class TestMcpServer(_IsolatedMemoryEnvironment):
             self.assertEqual(tools[name].inputSchema["properties"]["limit"]["maximum"], 100)
             self.assertEqual(tools[name].inputSchema["properties"]["limit"]["minimum"], 1)
 
+        for name in ("get_context", "search", "history", "list_unextracted"):
+            self.assertTrue(tools[name].annotations.readOnlyHint)
+            self.assertTrue(tools[name].annotations.idempotentHint)
+        for name in ("write_memory", "mark_extracted"):
+            self.assertFalse(tools[name].annotations.readOnlyHint)
+            self.assertFalse(tools[name].annotations.destructiveHint)
+        self.assertFalse(tools["forget"].annotations.readOnlyHint)
+        self.assertTrue(tools["forget"].annotations.destructiveHint)
+
     async def test_automatic_sessions_are_reused_per_project_and_not_unextracted(self):
         for project in ("alpha", "alpha", "beta"):
             await self.call(
