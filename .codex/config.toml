@@ -43,3 +43,9 @@ notification_condition = "always"
 
 [projects."/home/s4kr4/.agents"]
 trust_level = "trusted"
+
+[mcp_servers.shared-memory]
+default_tools_approval_mode = "auto"
+
+[mcp_servers.shared-memory.tools.forget]
+approval_mode = "approve"
