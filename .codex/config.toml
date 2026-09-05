@@ -45,7 +45,7 @@ notification_condition = "always"
 trust_level = "trusted"
 
 [mcp_servers.shared-memory]
-default_tools_approval_mode = "auto"
+default_tools_approval_mode = "approve"
 
 [mcp_servers.shared-memory.tools.forget]
-approval_mode = "approve"
+approval_mode = "prompt"
