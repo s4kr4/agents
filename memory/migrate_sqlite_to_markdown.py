@@ -9,6 +9,7 @@ derived content for a given logical key -- see ``_migrate_memories``).
 This is the only remaining place in this codebase allowed to depend on
 ``sqlite3`` -- it exists purely to read the retired database one last time.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -55,7 +56,9 @@ def _connect_readonly(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
-def _migrate_sessions(conn: sqlite3.Connection, local_store: LocalPipelineStore, apply: bool) -> int:
+def _migrate_sessions(
+    conn: sqlite3.Connection, local_store: LocalPipelineStore, apply: bool
+) -> int:
     rows = conn.execute("SELECT * FROM sessions").fetchall()
     if apply:
         for row in rows:
@@ -97,7 +100,9 @@ def _migrate_events(conn: sqlite3.Connection, local_store: LocalPipelineStore, a
     return len(rows)
 
 
-def _migrate_observations(conn: sqlite3.Connection, local_store: LocalPipelineStore, apply: bool) -> int:
+def _migrate_observations(
+    conn: sqlite3.Connection, local_store: LocalPipelineStore, apply: bool
+) -> int:
     event_session: dict[str, str] = {
         row["id"]: row["session_id"] for row in conn.execute("SELECT id, session_id FROM events")
     }
@@ -182,7 +187,9 @@ def _value_summary(value: dict[str, Any]) -> str:
     return f"\n\n根拠: {normalized}"
 
 
-def _migrate_memories(conn: sqlite3.Connection, markdown_store: MarkdownMemoryStore, apply: bool) -> int:
+def _migrate_memories(
+    conn: sqlite3.Connection, markdown_store: MarkdownMemoryStore, apply: bool
+) -> int:
     """Migrate the legacy ``memories`` table, one file per logical key.
 
     The legacy schema stored one row per version of a memory (``active`` plus
@@ -201,7 +208,13 @@ def _migrate_memories(conn: sqlite3.Connection, markdown_store: MarkdownMemorySt
 
     groups: dict[tuple[str, str, str, str, str | None], list[sqlite3.Row]] = {}
     for row in memory_rows:
-        group_key = (row["entity_type"], row["entity_id"], row["key"], row["scope"], row["project_id"])
+        group_key = (
+            row["entity_type"],
+            row["entity_id"],
+            row["key"],
+            row["scope"],
+            row["project_id"],
+        )
         groups.setdefault(group_key, []).append(row)
 
     for (entity_type, entity_id, key, scope, project_id), rows in groups.items():
@@ -221,7 +234,8 @@ def _migrate_memories(conn: sqlite3.Connection, markdown_store: MarkdownMemorySt
         *history_rows, current_row = ordered_rows
 
         summaries = [
-            f"{row['summary']}{_value_summary(json.loads(row['value_json']))}" for row in ordered_rows
+            f"{row['summary']}{_value_summary(json.loads(row['value_json']))}"
+            for row in ordered_rows
         ]
         # A row whose summary is identical to the one immediately before it
         # (e.g. re-observed without the underlying value actually changing)
@@ -231,7 +245,9 @@ def _migrate_memories(conn: sqlite3.Connection, markdown_store: MarkdownMemorySt
             render_history_line(
                 summaries[index],
                 summaries[index + 1],
-                format_history_date(ordered_rows[index]["valid_until"] or ordered_rows[index]["updated_at"]),
+                format_history_date(
+                    ordered_rows[index]["valid_until"] or ordered_rows[index]["updated_at"]
+                ),
             )
             for index in range(len(history_rows))
             if summaries[index] != summaries[index + 1]
@@ -262,17 +278,19 @@ def migrate(db_path: Path, vault_dir: Path, local_dir: Path, apply: bool) -> dic
     conn = _connect_readonly(db_path)
     try:
         if apply:
+            # Store construction, the transaction and every use of the stores
+            # stay in this one branch so their type narrows to non-Optional
+            # throughout -- splitting construction from use across separate
+            # ``if apply:`` blocks defeated mypy's narrowing (both stores
+            # would still be typed ``X | None`` at the point of use).
             local_store = LocalPipelineStore(local_dir)
             markdown_store = MarkdownMemoryStore(vault_dir)
-        else:
-            local_store = None
-            markdown_store = None
-
-        if apply:
-            sessions = _migrate_sessions(conn, local_store, apply)
-            events = _migrate_events(conn, local_store, apply)
-            observations = _migrate_observations(conn, local_store, apply)
-            memories = _migrate_memories(conn, markdown_store, apply)
+            with local_store.transaction(), markdown_store.transaction():
+                markdown_store.assert_writable()
+                sessions = _migrate_sessions(conn, local_store, apply)
+                events = _migrate_events(conn, local_store, apply)
+                observations = _migrate_observations(conn, local_store, apply)
+                memories = _migrate_memories(conn, markdown_store, apply)
         else:
             sessions = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
             events = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
@@ -294,15 +312,23 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Migrate the legacy SQLite memory.db into the Vault + local file stores."
     )
-    parser.add_argument("--db", type=Path, default=DEFAULT_DB_PATH, help="Path to the legacy memory.db")
-    parser.add_argument("--vault", type=Path, required=True, help="Target Vault directory")
-    parser.add_argument("--local-dir", type=Path, required=True, help="Target local pipeline directory")
     parser.add_argument(
-        "--apply", action="store_true", help="Write files (default is a dry run that only reports counts)"
+        "--db", type=Path, default=DEFAULT_DB_PATH, help="Path to the legacy memory.db"
+    )
+    parser.add_argument("--vault", type=Path, required=True, help="Target Vault directory")
+    parser.add_argument(
+        "--local-dir", type=Path, required=True, help="Target local pipeline directory"
+    )
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="Write files (default is a dry run that only reports counts)",
     )
     args = parser.parse_args()
 
-    summary = migrate(args.db.expanduser(), args.vault.expanduser(), args.local_dir.expanduser(), args.apply)
+    summary = migrate(
+        args.db.expanduser(), args.vault.expanduser(), args.local_dir.expanduser(), args.apply
+    )
     json.dump({"ok": True, **summary}, sys.stdout, ensure_ascii=False, indent=2)
     sys.stdout.write("\n")
 

@@ -121,13 +121,14 @@ function List<T>({ items, renderItem, keyExtractor }: ListProps<T>) {
 
 ```typescript
 function MyForm({ onSubmit }: { onSubmit: (data: FormData) => void }) {
-  // ✅ 適切なイベント型
-  const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+  // ✅ フォーム送信は SubmitEvent
+  const handleSubmit = (event: React.SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
     onSubmit(formData);
   };
 
+  // ✅ 値変更は ChangeEvent（IME 入力途中等の生入力イベントは InputEvent）
   const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     console.log(event.target.value);
   };

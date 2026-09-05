@@ -9,27 +9,32 @@ Storage is split into two file-based layers (no SQLite):
   and audit logs, kept per-machine and never synced (see
   ``LLM_MEMORY_LOCAL_DIR``).
 """
+
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import wraps
 from pathlib import Path
 from typing import Any
 
-from local_store import LocalPipelineStore, new_id, resolve_local_dir, utc_now
-from markdown_store import MarkdownMemoryStore, humanize_key, resolve_vault_dir
+from local_store import LocalPipelineStore, new_id, utc_now
+from markdown_store import MarkdownMemoryStore, humanize_key
+from memory_config import MemoryConfigError, resolve_paths, resolve_queue_dir
+from store_paths import StorePathError, validate_component
+
+
+class MemoryUsageError(ValueError):
+    """入力値が不正で、保存処理を開始できない。"""
+
 
 EXTRACTOR_VERSION = "rule-based-v1"
-QUEUE_DIR = Path(
-    os.environ.get(
-        "LLM_MEMORY_QUEUE_DIR",
-        str(Path.home() / ".cache" / "llm-memory" / "queue"),
-    )
-)
 LANGUAGE_PREFERENCES = {
     "typescript": "TypeScript",
     "python": "Python",
@@ -48,6 +53,74 @@ OS_PREFERENCES = {
     "windows": "Windows",
     "arch": "Arch Linux",
 }
+
+
+@contextmanager
+def store_transaction(args):
+    """Acquire all participating stores in the same canonical order."""
+    stores = [
+        (args.local_store.local_dir, args.local_store),
+        (args.markdown_store.vault_dir, args.markdown_store),
+    ]
+    with ExitStack() as stack:
+        for _, store in sorted(stores, key=lambda item: os.path.normcase(str(item[0].resolve()))):
+            stack.enter_context(store.transaction())
+        yield
+
+
+def transactional(func):
+    @wraps(func)
+    def wrapped(args):
+        with store_transaction(args):
+            return func(args)
+
+    return wrapped
+
+
+def validate_write_memory(args: argparse.Namespace) -> str | None:
+    for field in ("key", "summary", "entity_type", "entity_id"):
+        value = getattr(args, field)
+        if not isinstance(value, str) or not value.strip():
+            raise MemoryUsageError(f"{field} must be a non-empty string")
+    if args.memory_type not in ("profile", "feedback", "reference"):
+        raise MemoryUsageError("memory_type must be profile, feedback or reference")
+    if args.scope not in ("global", "project"):
+        raise MemoryUsageError("write scope must be global or project")
+    if (
+        isinstance(args.confidence, bool)
+        or not isinstance(args.confidence, (int, float))
+        or not math.isfinite(args.confidence)
+        or not 0 <= args.confidence <= 1
+    ):
+        raise MemoryUsageError("confidence must be a finite number between 0 and 1")
+    project = args.project_id
+    try:
+        if project is not None:
+            validate_component(project)
+        session_id = getattr(args, "session_id", None)
+        if session_id is not None:
+            validate_component(session_id)
+            session = args.local_store.get_session(session_id)
+            if getattr(args, "require_session", False) and session is None:
+                raise MemoryUsageError(f"session not found: {session_id}")
+            if session is not None:
+                inherited = session.get("project_id")
+                if project is not None and project != inherited:
+                    raise MemoryUsageError("project_id conflicts with the source session")
+                project = inherited
+        project = resolve_effective_project_id(
+            scope=args.scope,
+            project_id=project,
+            entity_type=args.entity_type,
+            entity_id=args.entity_id,
+        )
+        if project is not None:
+            validate_component(project)
+    except StorePathError as exc:
+        raise MemoryUsageError(str(exc)) from exc
+    if args.scope == "project" and not project:
+        raise MemoryUsageError("scope='project' requires a project_id")
+    return project
 
 
 def parse_timestamp(value: str | None) -> datetime | None:
@@ -127,16 +200,21 @@ def recency_score(timestamp: str | None) -> float:
     return max(0.0, 1.0 - min(age_days / 180.0, 1.0))
 
 
-def cmd_init_db(args: argparse.Namespace) -> None:
+def run_init_db(args: argparse.Namespace) -> dict[str, Any]:
     # Directory creation happens in the store constructors (see main()).
-    print_json(
-        {
-            "ok": True,
-            "db": str(args.db) if args.db else None,
-            "vault": str(args.markdown_store.vault_dir),
-            "local_dir": str(args.local_store.local_dir),
-        }
-    )
+    return {
+        "ok": True,
+        "db": str(args.db) if args.db else None,
+        "vault": str(args.markdown_store.vault_dir),
+        "local_dir": str(args.local_store.local_dir),
+    }
+
+
+def cmd_init_db(args: argparse.Namespace) -> None:
+    try:
+        print_json(run_init_db(args))
+    except (MemoryUsageError, StorePathError) as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 def cmd_migrate_layout(args: argparse.Namespace) -> None:
@@ -144,22 +222,27 @@ def cmd_migrate_layout(args: argparse.Namespace) -> None:
     print_json({"ok": True, "moved": moved})
 
 
-def cmd_start_session(args: argparse.Namespace) -> None:
+def run_start_session(args: argparse.Namespace) -> dict[str, Any]:
     session_id = args.session_id or new_id("sess")
     args.local_store.ensure_session(
         session_id, client=args.client, user_id=args.user_id, project_id=args.project_id
     )
-    print_json(
-        {
-            "ok": True,
-            "session": {
-                "id": session_id,
-                "client": args.client,
-                "user_id": args.user_id,
-                "project_id": args.project_id,
-            },
-        }
-    )
+    return {
+        "ok": True,
+        "session": {
+            "id": session_id,
+            "client": args.client,
+            "user_id": args.user_id,
+            "project_id": args.project_id,
+        },
+    }
+
+
+def cmd_start_session(args: argparse.Namespace) -> None:
+    try:
+        print_json(run_start_session(args))
+    except (MemoryUsageError, StorePathError) as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 def cmd_append_event(args: argparse.Namespace) -> None:
@@ -331,7 +414,9 @@ def build_candidates(event: dict[str, Any]) -> list[ObservationCandidate]:
         except json.JSONDecodeError:
             parsed = {"raw": content}
 
-        command_text = parsed["command"] if isinstance(parsed, dict) and "command" in parsed else content
+        command_text = (
+            parsed["command"] if isinstance(parsed, dict) and "command" in parsed else content
+        )
         candidates.append(
             ObservationCandidate(
                 type="reference",
@@ -472,7 +557,7 @@ def safe_upsert_memory_from_observation(
         return None
 
 
-def cmd_list_unextracted(args: argparse.Namespace) -> None:
+def run_list_unextracted(args: argparse.Namespace) -> dict[str, Any]:
     sessions = args.local_store.list_unextracted(args.limit)
     results = [
         {
@@ -484,27 +569,19 @@ def cmd_list_unextracted(args: argparse.Namespace) -> None:
         }
         for s in sessions
     ]
-    print_json({"ok": True, "sessions": results, "count": len(results)})
+    return {"ok": True, "sessions": results, "count": len(results)}
 
 
-def cmd_write_memory(args: argparse.Namespace) -> None:
-    # Validate before any local-store writes: a scope="project" call that
-    # can't resolve a project_id must fail fast without leaving behind an
-    # event/observation record, otherwise a poisoned observation lingers in
-    # the local store and later aborts batch consolidation (see
-    # ``safe_upsert_memory_from_observation``).
-    effective_project_id = resolve_effective_project_id(
-        scope=args.scope,
-        project_id=args.project_id,
-        entity_type=args.entity_type,
-        entity_id=args.entity_id,
-    )
-    if args.scope == "project" and not effective_project_id:
-        raise SystemExit(
-            f"scope='project' requires a project_id (key={args.key!r}); refusing to "
-            "silently write a global-scope file instead"
-        )
+def cmd_list_unextracted(args: argparse.Namespace) -> None:
+    try:
+        print_json(run_list_unextracted(args))
+    except (MemoryUsageError, StorePathError) as exc:
+        raise SystemExit(str(exc)) from exc
 
+
+@transactional
+def run_write_memory(args: argparse.Namespace) -> dict[str, Any]:
+    effective_project_id = validate_write_memory(args)
     event = args.local_store.append_event(
         args.session_id,
         role="system",
@@ -516,7 +593,11 @@ def cmd_write_memory(args: argparse.Namespace) -> None:
         importance=0.9,
     )
 
-    value = {"type": args.memory_type, "value": args.summary, "source": "claude_code_extract"}
+    value = {
+        "type": args.memory_type,
+        "value": args.summary,
+        "source": getattr(args, "source", "claude_code_extract"),
+    }
     observation = args.local_store.append_observation(
         session_id=args.session_id,
         source_event_id=event["id"],
@@ -526,20 +607,35 @@ def cmd_write_memory(args: argparse.Namespace) -> None:
         value=value,
         confidence=args.confidence,
         scope=args.scope,
-        project_id=args.project_id,
-        extractor_version="claude-code-v1",
+        project_id=effective_project_id,
+        extractor_version=getattr(args, "extractor_version", "claude-code-v1"),
     )
 
     upsert_memory_from_observation(args.markdown_store, observation)
 
-    print_json({"ok": True, "observation_id": observation["id"], "event_id": event["id"]})
+    return {"ok": True, "observation_id": observation["id"], "event_id": event["id"]}
+
+
+def cmd_write_memory(args: argparse.Namespace) -> None:
+    try:
+        print_json(run_write_memory(args))
+    except (MemoryUsageError, StorePathError) as exc:
+        raise SystemExit(str(exc)) from exc
+
+
+def run_mark_extracted(args: argparse.Namespace) -> dict[str, Any]:
+    updated = args.local_store.mark_extracted(args.session_id)
+    return {"ok": True, "updated": updated}
 
 
 def cmd_mark_extracted(args: argparse.Namespace) -> None:
-    updated = args.local_store.mark_extracted(args.session_id)
-    print_json({"ok": True, "updated": updated})
+    try:
+        print_json(run_mark_extracted(args))
+    except (MemoryUsageError, StorePathError) as exc:
+        raise SystemExit(str(exc)) from exc
 
 
+@transactional
 def cmd_end_session(args: argparse.Namespace) -> None:
     session = args.local_store.get_session(args.session_id)
     if not session:
@@ -580,10 +676,9 @@ def cmd_end_session(args: argparse.Namespace) -> None:
     )
 
 
+@transactional
 def cmd_consolidate(args: argparse.Namespace) -> None:
-    observations = sorted(
-        args.local_store.iter_all_observations(), key=lambda o: o["observed_at"]
-    )
+    observations = sorted(args.local_store.iter_all_observations(), key=lambda o: o["observed_at"])
     if args.entity_id:
         observations = [o for o in observations if o["entity_id"] == args.entity_id]
     if args.attribute:
@@ -750,7 +845,7 @@ def _history_memory_rows(
     return records
 
 
-def cmd_history(args: argparse.Namespace) -> None:
+def run_history(args: argparse.Namespace) -> dict[str, Any]:
     local_store: LocalPipelineStore = args.local_store
     markdown_store: MarkdownMemoryStore = args.markdown_store
     query = args.query.strip() if args.query else None
@@ -826,24 +921,29 @@ def cmd_history(args: argparse.Namespace) -> None:
             session_id=args.session_id, query=query or "", returned_memory_ids=returned_memory_ids
         )
 
-    print_json(
-        {
-            "ok": True,
-            "query": query,
-            "project_id": args.project_id,
-            "memories": memory_hits,
-            "sessions": session_hits,
-            "events": event_hits,
-            "counts": {
-                "memories": len(memory_hits),
-                "sessions": len(session_hits),
-                "events": len(event_hits),
-            },
-        }
-    )
+    return {
+        "ok": True,
+        "query": query,
+        "project_id": args.project_id,
+        "memories": memory_hits,
+        "sessions": session_hits,
+        "events": event_hits,
+        "counts": {
+            "memories": len(memory_hits),
+            "sessions": len(session_hits),
+            "events": len(event_hits),
+        },
+    }
 
 
-def cmd_search(args: argparse.Namespace) -> None:
+def cmd_history(args: argparse.Namespace) -> None:
+    try:
+        print_json(run_history(args))
+    except (MemoryUsageError, StorePathError) as exc:
+        raise SystemExit(str(exc)) from exc
+
+
+def run_search(args: argparse.Namespace) -> dict[str, Any]:
     records = args.markdown_store.search(
         query=args.query,
         entity_id=args.entity_id,
@@ -860,10 +960,17 @@ def cmd_search(args: argparse.Namespace) -> None:
             returned_memory_ids=[r["id"] for r in ranked],
         )
 
-    print_json({"ok": True, "memories": [serialize_memory(r) for r in ranked], "count": len(ranked)})
+    return {"ok": True, "memories": [serialize_memory(r) for r in ranked], "count": len(ranked)}
 
 
-def cmd_get_context(args: argparse.Namespace) -> None:
+def cmd_search(args: argparse.Namespace) -> None:
+    try:
+        print_json(run_search(args))
+    except (MemoryUsageError, StorePathError) as exc:
+        raise SystemExit(str(exc)) from exc
+
+
+def run_get_context(args: argparse.Namespace) -> dict[str, Any]:
     """Return a response-context bundle, bucketed by ``type``.
 
     ``--user-id`` is accepted for CLI stability but no longer used: this
@@ -883,20 +990,36 @@ def cmd_get_context(args: argparse.Namespace) -> None:
             continue
         payload[bucket].append(serialize_memory(record))
 
-    print_json({"ok": True, "context": payload})
+    return {"ok": True, "context": payload}
 
 
-def cmd_forget(args: argparse.Namespace) -> None:
+def cmd_get_context(args: argparse.Namespace) -> None:
+    try:
+        print_json(run_get_context(args))
+    except (MemoryUsageError, StorePathError) as exc:
+        raise SystemExit(str(exc)) from exc
+
+
+@transactional
+def run_forget(args: argparse.Namespace) -> dict[str, Any]:
     updated = args.markdown_store.forget(args.memory_id)
     args.local_store.append_deletion_log(
         target_type="memory", target_id=args.memory_id, reason=args.reason
     )
-    print_json({"ok": True, "updated": updated, "memory_id": args.memory_id})
+    return {"ok": True, "updated": updated, "memory_id": args.memory_id}
+
+
+def cmd_forget(args: argparse.Namespace) -> None:
+    try:
+        print_json(run_forget(args))
+    except (MemoryUsageError, StorePathError) as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 def cmd_queue_session(args: argparse.Namespace) -> None:
     """Save a complete session payload to a JSONL file (no store writes)."""
-    queue_dir = QUEUE_DIR
+    validate_component(args.session_id)
+    queue_dir = resolve_queue_dir()
     queue_dir.mkdir(parents=True, exist_ok=True)
 
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
@@ -931,7 +1054,9 @@ def _flush_one_queue_item(
     local_store.ensure_session(session_id, client=client, user_id=user_id, project_id=project_id)
 
     if user_content:
-        local_store.append_event(session_id, role="user", kind="message", content=user_content, importance=0.5)
+        local_store.append_event(
+            session_id, role="user", kind="message", content=user_content, importance=0.5
+        )
 
     if assistant_content:
         local_store.append_event(
@@ -954,7 +1079,7 @@ def _flush_one_queue_item(
 
 def cmd_flush_queue(args: argparse.Namespace) -> None:
     """Read queued JSONL files and write their payloads into the file-based stores."""
-    queue_dir = QUEUE_DIR
+    queue_dir = resolve_queue_dir()
     files = sorted(queue_dir.glob("*.jsonl")) if queue_dir.exists() else []
     if not files:
         print_json({"ok": True, "flushed": 0})
@@ -977,7 +1102,7 @@ def cmd_flush_queue(args: argparse.Namespace) -> None:
 def flush_queue_if_possible(vault_dir: Path, local_dir: Path) -> int:
     """Attempt to flush the queue to the file-based stores. Never raises."""
     try:
-        queue_dir = QUEUE_DIR
+        queue_dir = resolve_queue_dir()
         files = sorted(queue_dir.glob("*.jsonl")) if queue_dir.exists() else []
         if not files:
             return 0
@@ -998,6 +1123,7 @@ def flush_queue_if_possible(vault_dir: Path, local_dir: Path) -> int:
         return 0
 
 
+@transactional
 def cmd_cleanup(args: argparse.Namespace) -> None:
     """Clean up stale data: remove recent_summary memories/observations.
 
@@ -1108,7 +1234,9 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--limit", type=int, default=10)
     search.set_defaults(func=cmd_search)
 
-    history = subparsers.add_parser("history", help="Search historical sessions, events, and memories")
+    history = subparsers.add_parser(
+        "history", help="Search historical sessions, events, and memories"
+    )
     history.add_argument("--session-id")
     history.add_argument("--query")
     history.add_argument("--project-id")
@@ -1131,7 +1259,9 @@ def build_parser() -> argparse.ArgumentParser:
     get_context.add_argument("--project-id", required=True)
     get_context.set_defaults(func=cmd_get_context)
 
-    forget = subparsers.add_parser("forget", help="Archive a memory (move it out of active results, never deleted)")
+    forget = subparsers.add_parser(
+        "forget", help="Archive a memory (move it out of active results, never deleted)"
+    )
     forget.add_argument("--memory-id", required=True)
     forget.add_argument("--reason", required=True)
     forget.set_defaults(func=cmd_forget)
@@ -1181,9 +1311,7 @@ def build_parser() -> argparse.ArgumentParser:
     write_memory.add_argument("--project-id")
     write_memory.set_defaults(func=cmd_write_memory)
 
-    mark_extracted = subparsers.add_parser(
-        "mark-extracted", help="Mark a session as extracted"
-    )
+    mark_extracted = subparsers.add_parser("mark-extracted", help="Mark a session as extracted")
     mark_extracted.add_argument("--session-id", required=True)
     mark_extracted.set_defaults(func=cmd_mark_extracted)
 
@@ -1195,18 +1323,18 @@ def main() -> None:
     args = parser.parse_args()
     args.db = args.db.expanduser() if args.db else None
 
-    vault_dir, used_fallback = resolve_vault_dir(args.vault.expanduser() if args.vault else None)
-    if used_fallback:
-        print(
-            f"warning: LLM_MEMORY_VAULT is not set; falling back to {vault_dir} "
-            "(not synced by Syncthing)",
-            file=sys.stderr,
-        )
-    local_dir = resolve_local_dir(args.local_dir.expanduser() if args.local_dir else None)
-
-    args.markdown_store = MarkdownMemoryStore(vault_dir)
-    args.local_store = LocalPipelineStore(local_dir)
-    args.func(args)
+    try:
+        paths = resolve_paths(vault=args.vault, local_dir=args.local_dir)
+        if paths.used_fallback:
+            print(
+                f"warning: LLM_MEMORY_VAULT is not set; falling back to {paths.vault} (not synced by Syncthing)",
+                file=sys.stderr,
+            )
+        args.markdown_store = MarkdownMemoryStore(paths.vault)
+        args.local_store = LocalPipelineStore(paths.local_dir)
+        args.func(args)
+    except (MemoryUsageError, MemoryConfigError, StorePathError, OSError, TimeoutError) as exc:
+        parser.exit(2, f"error: {exc}\n")
 
 
 if __name__ == "__main__":

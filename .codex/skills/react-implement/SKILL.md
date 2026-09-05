@@ -31,7 +31,8 @@ React実装の逆引きリファレンスです。「〜したいとき」から
     Foo/
     ├── index.tsx     # コンポーネント本体（インポートは `import { Foo } from './Foo'`）
     ├── function.ts   # 純粋ロジック（React API 不使用）
-    └── hook.ts       # カスタムフック（React API 使用、必要な場合のみ）
+    ├── hook.ts       # カスタムフック（React API 使用、必要な場合のみ）
+    └── context.ts    # Context 定義（createContext と型、必要な場合のみ。JSX を含む Provider コンポーネントは index.tsx または専用ディレクトリへ）
     ```
 
     - ディレクトリ名がコンポーネント名を表すため、内部ファイルには接頭辞を付けない（`function.ts` であって `fooFunction.ts` ではない）
@@ -92,7 +93,7 @@ React実装の逆引きリファレンスです。「〜したいとき」から
 |---|---|---|
 | 基本的なProps型を定義したい | `interface` でProps型を定義する | [PATTERNS: 基本的なProps型](PATTERNS.md#基本的なprops型) |
 | 汎用的な型パラメータを使いたい | ジェネリック `<T>` でコンポーネントを定義 | [PATTERNS: ジェネリックProps](PATTERNS.md#ジェネリックprops) |
-| イベントハンドラの型を指定したい | `React.FormEvent`, `React.ChangeEvent` 等を使う | [PATTERNS: イベントハンドラの型](PATTERNS.md#イベントハンドラの型) |
+| イベントハンドラの型を指定したい | フォーム送信は `React.SubmitEvent<HTMLFormElement>`、値変更は `React.ChangeEvent` / `React.InputEvent` を用途別に使う（`React.FormEvent` は @types/react 19.2.14+ で非推奨・TS6385） | [PATTERNS: イベントハンドラの型](PATTERNS.md#イベントハンドラの型) |
 
 ### 状態を管理したい
 
@@ -171,6 +172,8 @@ React コード実装後、以下を確認:
 - [ ] エラーバウンダリが必要な箇所に実装されている
 - [ ] アクセシビリティ（ARIA属性、セマンティックHTML）が考慮されている
 - [ ] React 19+ で `forwardRef` を新規使用していない（ref は通常の props として受け取る）
+- [ ] Legacy API（`Children` / `cloneElement` / `isValidElement`）を新規使用していない（composition・Context・明示的 props を優先。これらは型定義上 `@deprecated` ではなく型検査で検出できないため、レビューで確認する。参照: https://react.dev/reference/react/legacy ）
+- [ ] 導入済み @types/react の `@deprecated` 指定・Language Service 診断（例: `FormEvent` の TS6385）を確認し、非推奨型を新規使用していない
 
 ---
 

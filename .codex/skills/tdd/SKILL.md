@@ -12,6 +12,7 @@ description: TDD（テスト駆動開発）の手順とベストプラクティ�
 読み込んだら、まずタスクに対してこのスキルのどこまでが適用対象かを判定する:
 
 - **Web 実装（API / UI）**: スキル全体が対象。「🎭 オーケストレーション手順」（tester / implementer 分離）に従う
+- **RED 種別の判定**: タスクが「型・設定・非推奨 API の移行（ランタイム挙動が変わらない）」または「既存挙動を維持する純粋なリファクタリング」に該当するかを確認し、該当する場合は「🧭 RED の種別」に従って behavior 以外の RED を選択する。この判定を怠ると、後続フェーズ全体が「failing テスト必須」という誤った前提で進む
 - **CLI・スクリプト等の non-web 実装（development-workflow パターン4）**: `@general-implementer` が単独で実装するため、tester / implementer 分離（「🎭 オーケストレーション手順」と「差し戻しルール」）は非適用。ただし TDD の基本原則・実装手順・アンチパターン・命名規約など残りのセクションは、単独実装時にも適用する
 - **軽微変更（同パターン6）**: スタイル値・文言・コメントのみの変更でテスト作成自体を行わないため、スキル全体が対象外。この時点で以降を読み飛ばしてよい
 
@@ -27,11 +28,15 @@ description: TDD（テスト駆動開発）の手順とベストプラクティ�
 2. 対応する tester に委譲:
    - API 変更 → `@web-api-tester`
    - UI 変更 → `@web-ui-tester`
-   - 入力: **フェーズの明示（Phase 3a / RED）**、完了条件（振る舞い記述）、対象ファイル、既存パターン
+   - 入力: **フェーズの明示（Phase 3a / RED）**、**RED 種別の判定結果（「🧭 RED の種別」参照）**、完了条件（振る舞い記述）、対象ファイル、既存パターン
 3. tester からのレポートを受領:
    - テストファイル一覧
    - テストケース一覧
-   - 全ケース failing の実行ログ
+   - **RED 種別**（behavior / static diagnostic / characterization baseline）
+   - 種別に応じた失敗根拠:
+     - behavior: 全ケース failing の実行ログ
+     - static diagnostic: 対象診断（compiler / lint / deprecation）の検出ログ
+     - characterization baseline: baseline テストが GREEN で通過している実行ログ
 4. レポートを添えて implementer に委譲:
    - API → `@web-api-implementer`
    - UI → `@web-ui-implementer`
@@ -85,6 +90,20 @@ TDDは以下の3ステップを繰り返すサイクルで進めます：
 1. **失敗するテストを書くまで、プロダクションコードを書いてはならない**
 2. **失敗するテストを必要以上に書いてはならない**（コンパイルエラーも失敗とみなす）
 3. **現在失敗しているテストを通すために必要なプロダクションコード以上を書いてはならない**
+
+## 🧭 RED の種別
+
+RED は「失敗する振る舞いテスト」に限らない。変更の性質に応じて以下の3種別を使い分け、tester レポートに種別を明記する。
+
+| 種別 | 対象 | RED の定義 | GREEN の定義 |
+|------|------|-----------|-------------|
+| **behavior**（既定） | 新規仕様の実装・実挙動が変わるバグ修正 | 期待する振る舞いを記述したテストが failing | テストが passing |
+| **static diagnostic** | 型・設定・非推奨 API の移行（ランタイム挙動が変わらない） | compiler エラー / lint エラー / deprecation 診断（例: TS6385）が検出されている状態 | 対象診断がゼロになり、既存テストが GREEN を維持 |
+| **characterization baseline** | 既存挙動を維持する純粋なリファクタリング | （failing を要求しない）現行挙動を固定する characterization test が**開始時から GREEN であることが正常** | リファクタリング後も baseline テストが GREEN を維持 |
+
+- 「全ケース failing」の確認は **behavior RED にのみ適用**する。characterization test に failing を要求しない
+- ランタイム挙動が変わらない変更に対して無理に failing テストを作ろうとすると、実装詳細テストや偽の要件を生む（アンチパターン）
+- リファクタリングや移行の途中で実際の不具合を発見した場合は、**その不具合だけを behavior RED として追加**する（例: characterization は GREEN のまま、境界条件の実不具合のみ failing テスト化）
 
 ## 📋 TDD実装手順
 

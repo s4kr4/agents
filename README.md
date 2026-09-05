@@ -46,9 +46,13 @@ make update  # 最新を pull してデプロイ
 - Vault（`memories`。Syncthing 同期対象）: 安定した記憶を Obsidian Vault 配下に Markdown で保存。1 論理キー = 1 ファイルで、値の変遷は同一ファイル内の変更履歴に追記する
 - local（`sessions`/`events`/`observations`。同期対象外）: 生ログ・pipeline 層のデータを `~/.agents/memory/local/` 配下にファイルとして保存
 
-Codex にはセッション開始・終了時に自動でメモリ操作を行うシェルラッパーを用意しています。Claude Code 側は毎ターン自動保存する仕組みはなく、`shared-memory` スキル経由でモデルが必要と判断したときに手動で読み書きします。DB に書き込めない環境向けのファイルキューへのフォールバック（`queue-session` / `flush-queue`）は pipeline 層の仕組みとして維持されています。
+日常の読み書きは `shared-memory` stdio MCP サーバー経由で行います。各端末に uv と保存先の TOML を設定し、各 CLI・Desktop アプリへ登録します。OS ごとの保存先をアプリから切り離せますが、端末ごとの導入とアプリの承認設定は残ります。リモート常駐サービスへの権限集約ではありません。
 
-詳しい使い方は `memory` スキル（`.claude/skills/memory/SKILL.md`）および `shared-memory` スキル（`.claude/skills/shared-memory/SKILL.md`）を参照してください。
+[導入・OS 別の設定・検証状況](memory/README.md#mcp-の導入)に Ubuntu/macOS/Windows の手順をまとめています。native Windows では PowerShell の入口を使用でき、Bash・make は不要です。GUI と Windows/macOS の実機確認は自動試験とは区別して扱います。
+
+保存形式や競合時の扱いなどの内部仕様は [`memory/DETAILS.md`](memory/DETAILS.md) にまとめています。
+
+Codex のセッション用シェルラッパー、初期化・移行・キュー処理の CLI は維持しています。CLI を MCP の代わりに使うときも同じ明示設定が必要です。壊れた設定や権限エラーを別 Vault への保存で回避しません。日常操作は `shared-memory`、履歴の知識抽出は `memory-extract`、診断は `memory` スキルを参照してください。
 
 ```bash
 make memory-init  # Vault/local ディレクトリの初期化

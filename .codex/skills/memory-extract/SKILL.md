@@ -1,81 +1,30 @@
 ---
 name: memory-extract
-description: セッション履歴から意味記憶を抽出し Vault に保存する。未処理セッションの要約を読み、長期的に有効な知識を判断して書き込む。Use when user says "記憶を抽出", "セッションから学習", "memory extract", or "/memory-extract".
+description: 未処理セッションの要約から、長期的に有効な意味記憶だけを抽出して Vault に保存する。セッションから学習、記憶を抽出、memory extract、/memory-extract の依頼で使う。
 ---
 
 # Memory Extract
 
-セッションの要約から長期的に有効な知識を抽出し、共有メモリの Vault に保存する。
+セッション履歴を安定した意味記憶へ変換する専用ワークフロー。通常の記憶の読み書きは `shared-memory` を使う。
 
 ## 手順
 
-### 1. 未処理セッションを取得
+1. `list_unextracted(limit=10)` で未処理セッションを取得し、各セッションの `id`、`user_id`、`project_id` を保持する
+2. summary から、ユーザーの好み、環境・ツール設定、プロジェクトのルール・決定、繰り返すワークフロー、コミュニケーションの好みを抽出候補にする
+3. 一時的な作業内容、セッション固有の事情、未検証の推測、既存記憶と重複する内容は候補から除外する
+4. `search` / `get_context` で現行記憶との重複・矛盾を確認する
+5. 保存する候補を `write_memory` に渡す。抽出では元セッションの `session_id` を必ず指定し、project 記憶は元の `project_id` と一致させる
+6. すべての保存結果を確認した後、元の `session_id` で `mark_extracted` を呼ぶ。保存に失敗したセッションは処理済みにしない
+7. `search` と `get_context` で保存結果を確認する
 
-```bash
-memory/run-python.sh memory/memory.py list-unextracted --limit 10
-```
+## 保存の分類
 
-### 2. 各セッションの summary を分析
+- `profile`: ユーザーの静的な好み・環境
+- `feedback`: 協働や応答に関する確認済みの好み
+- `reference`: プロジェクトの決定事項・参照情報
 
-以下の観点で判断する:
-- ユーザーの技術的な嗜好・スキルレベル
-- 開発環境・ツールの設定
-- プロジェクト固有のルール・制約
-- ワークフローの習慣
-- コミュニケーションの好み
+confidence は確認の確かさに合わせ、未検証の推測には付けない。抽出すべき内容がない場合も、確認後に `mark_extracted` を実行する。
 
-以下は抽出しない:
-- 一時的な作業内容（特定のバグ修正、特定のファイル変更）
-- セッション固有のコンテキスト
-- 既に memories に存在する情報
+## MCP が使えない場合
 
-### 3. 抽出した知識を書き込み
-
-```bash
-memory/run-python.sh memory/memory.py write-memory \
-  --session-id SESSION_ID \
-  --memory-type profile \
-  --key "簡潔な英語キー" \
-  --summary "日本語での簡潔な説明" \
-  --confidence 0.8 \
-  --scope global
-```
-
-パラメータ:
-- `--memory-type`: `profile`（静的事実・嗜好）/ `feedback`（協働のしかたの学び）/ `reference`（外部システムへのポインタ・プロジェクト固有の決定事項）
-- `--scope`: `global`（全プロジェクト共通）/ `project`（特定プロジェクト、`--project-id` も必須指定。省略するとエラーになる）
-- `--confidence`: 明示的発言 0.8〜1.0、推測 0.5〜0.7
-- `--entity-type`: デフォルト `user`。プロジェクト記憶なら `project`
-- `--entity-id`: デフォルト `default`。プロジェクトなら project_id
-
-### 4. セッションを処理済みにマーク
-
-```bash
-memory/run-python.sh memory/memory.py mark-extracted --session-id SESSION_ID
-```
-
-### 5. 結果を確認
-
-```bash
-memory/run-python.sh memory/memory.py search --query 'キーワード'
-memory/run-python.sh memory/memory.py get-context --user-id default --project-id default
-```
-
-## 判断基準
-
-### 書くべき memory の例
-- 「応答は日本語で行う」（feedback, confidence=1.0）
-- 「Web 開発では TypeScript を好む」（profile, confidence=0.8）
-- 「Arch Linux を使用」（profile, confidence=0.9）
-- 「TDD を重視する」（feedback, confidence=0.8）
-- 「lab-web プロジェクトは pnpm monorepo」（reference, scope=project, project_id=lab-web）
-
-### 書くべきでない memory の例
-- 「今日 Docker ビルドを修正した」（一時的）
-- 「ポート 3010 が衝突した」（一時的）
-- 「memory.py を編集中」（セッション固有）
-
-## 注意
-- 抽出すべき情報がないセッションは `mark-extracted` だけ実行する
-- 1セッションから複数の memory を抽出してよい
-- 既存の記憶（archive されていないもの）と重複する内容は書かない
+`memory/README.md` の同じ明示設定を確認したうえで、`list-unextracted` → `write-memory --session-id` → `mark-extracted --session-id` の順に CLI を使う。設定エラーや権限エラーを別 Vault で回避しない。部分失敗の調査は `memory` スキルへ委譲する。

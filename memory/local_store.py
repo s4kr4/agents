@@ -5,6 +5,7 @@ This directory is deliberately kept outside of the Syncthing-synced Vault:
 raw pipeline data (append-only logs, in-flight sessions) is high-churn and
 would otherwise cause unnecessary Syncthing traffic and conflict risk.
 """
+
 from __future__ import annotations
 
 import json
@@ -13,6 +14,10 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from memory_config import resolve_local_dir as resolve_local_dir
+from store_lock import locked, store_lock
+from store_paths import StorePathError, checked_path, validate_component
 
 DEFAULT_LOCAL_SUBDIR = Path(__file__).resolve().parent / "local"
 
@@ -25,29 +30,21 @@ def new_id(prefix: str) -> str:
     return f"{prefix}_{uuid.uuid4().hex}"
 
 
-def resolve_local_dir(explicit: Path | None) -> Path:
-    """Resolve the local pipeline directory (env LLM_MEMORY_LOCAL_DIR, else default)."""
-    if explicit is not None:
-        return Path(explicit)
-
-    env_value = os.environ.get("LLM_MEMORY_LOCAL_DIR")
-    if env_value:
-        return Path(env_value)
-
-    return DEFAULT_LOCAL_SUBDIR
-
-
 class LocalPipelineStore:
     """File-based store for the pipeline layer (sessions/events/observations) and audit logs."""
 
     def __init__(self, local_dir: Path) -> None:
-        self.local_dir = Path(local_dir)
+        self.local_dir = Path(local_dir).resolve()
         self.sessions_dir = self.local_dir / "sessions"
         self.events_dir = self.local_dir / "events"
         self.observations_dir = self.local_dir / "observations"
         self.logs_dir = self.local_dir / "logs"
         for directory in (self.sessions_dir, self.events_dir, self.observations_dir, self.logs_dir):
+            checked_path(self.local_dir, directory)
             directory.mkdir(parents=True, exist_ok=True)
+
+    def transaction(self, timeout: float = 30.0):
+        return store_lock(self.local_dir, timeout)
 
     # -- atomic write helper -------------------------------------------------
 
@@ -78,8 +75,10 @@ class LocalPipelineStore:
     # -- sessions --------------------------------------------------------
 
     def _session_path(self, session_id: str) -> Path:
-        return self.sessions_dir / f"{session_id}.json"
+        validate_component(session_id)
+        return checked_path(self.local_dir, self.sessions_dir / f"{session_id}.json")
 
+    @locked
     def ensure_session(
         self,
         session_id: str,
@@ -105,12 +104,17 @@ class LocalPipelineStore:
         self._atomic_write_json(self._session_path(session_id), session)
         return session
 
+    @locked
     def get_session(self, session_id: str) -> dict[str, Any] | None:
         path = self._session_path(session_id)
         if not path.exists():
             return None
-        return json.loads(path.read_text(encoding="utf-8"))
+        session = json.loads(path.read_text(encoding="utf-8"))
+        if session.get("id") != session_id:
+            raise StorePathError("stored session ID does not match its filename")
+        return session
 
+    @locked
     def write_session(self, session: dict[str, Any]) -> None:
         """Atomically write a full session record, overwriting any existing file.
 
@@ -120,20 +124,25 @@ class LocalPipelineStore:
         """
         self._atomic_write_json(self._session_path(session["id"]), session)
 
+    @locked
     def update_session(self, session_id: str, **fields: Any) -> dict[str, Any]:
         session = self.get_session(session_id)
         if session is None:
             raise FileNotFoundError(f"session not found: {session_id}")
+        if "id" in fields and fields["id"] != session_id:
+            raise StorePathError("session ID cannot be changed")
         session.update(fields)
         self._atomic_write_json(self._session_path(session_id), session)
         return session
 
+    @locked
     def list_sessions(self) -> list[dict[str, Any]]:
         sessions = [
-            json.loads(path.read_text(encoding="utf-8")) for path in sorted(self.sessions_dir.glob("*.json"))
+            self.get_session(path.stem) for path in sorted(self.sessions_dir.glob("*.json"))
         ]
         return sessions
 
+    @locked
     def list_unextracted(self, limit: int = 10) -> list[dict[str, Any]]:
         candidates = [
             session
@@ -143,6 +152,7 @@ class LocalPipelineStore:
         candidates.sort(key=lambda s: s.get("started_at") or "")
         return candidates[:limit]
 
+    @locked
     def mark_extracted(self, session_id: str) -> int:
         session = self.get_session(session_id)
         if session is None or session.get("extracted_at") is not None:
@@ -153,8 +163,10 @@ class LocalPipelineStore:
     # -- events ------------------------------------------------------------
 
     def _events_path(self, session_id: str) -> Path:
-        return self.events_dir / f"{session_id}.jsonl"
+        validate_component(session_id)
+        return checked_path(self.local_dir, self.events_dir / f"{session_id}.jsonl")
 
+    @locked
     def append_event(
         self,
         session_id: str,
@@ -177,20 +189,24 @@ class LocalPipelineStore:
         self._append_jsonl(self._events_path(session_id), event)
         return event
 
+    @locked
     def iter_events(self, session_id: str) -> list[dict[str, Any]]:
         return self._read_jsonl(self._events_path(session_id))
 
+    @locked
     def iter_all_events(self) -> list[dict[str, Any]]:
         events = []
         for path in sorted(self.events_dir.glob("*.jsonl")):
-            events.extend(self._read_jsonl(path))
+            events.extend(self.iter_events(path.stem))
         return events
 
     # -- observations --------------------------------------------------------
 
     def _observations_path(self, session_id: str) -> Path:
-        return self.observations_dir / f"{session_id}.jsonl"
+        validate_component(session_id)
+        return checked_path(self.local_dir, self.observations_dir / f"{session_id}.jsonl")
 
+    @locked
     def append_observation(
         self,
         *,
@@ -247,15 +263,18 @@ class LocalPipelineStore:
         self._append_jsonl(self._observations_path(session_id), observation)
         return observation
 
+    @locked
     def iter_observations(self, session_id: str) -> list[dict[str, Any]]:
         return self._read_jsonl(self._observations_path(session_id))
 
+    @locked
     def iter_all_observations(self) -> list[dict[str, Any]]:
         observations = []
         for path in sorted(self.observations_dir.glob("*.jsonl")):
-            observations.extend(self._read_jsonl(path))
+            observations.extend(self.iter_observations(path.stem))
         return observations
 
+    @locked
     def remove_matching_observations(self, session_id: str, *, attribute: str) -> int:
         """Remove observations with the given attribute from a session, atomically."""
         path = self._observations_path(session_id)
@@ -275,6 +294,7 @@ class LocalPipelineStore:
 
     # -- audit logs --------------------------------------------------------
 
+    @locked
     def append_retrieval_log(
         self,
         *,
@@ -290,9 +310,10 @@ class LocalPipelineStore:
             "returned_memory_ids": returned_memory_ids,
             "created_at": utc_now(),
         }
-        self._append_jsonl(self.logs_dir / "retrieval.jsonl", entry)
+        self._append_jsonl(checked_path(self.local_dir, self.logs_dir / "retrieval.jsonl"), entry)
         return entry
 
+    @locked
     def append_deletion_log(
         self,
         *,
@@ -308,5 +329,5 @@ class LocalPipelineStore:
             "reason": reason,
             "created_at": utc_now(),
         }
-        self._append_jsonl(self.logs_dir / "deletions.jsonl", entry)
+        self._append_jsonl(checked_path(self.local_dir, self.logs_dir / "deletions.jsonl"), entry)
         return entry

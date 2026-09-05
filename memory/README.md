@@ -1,97 +1,140 @@
 # memory
 
-Codex や Claude Code など複数の LLM クライアントからセッション横断で記憶を共有するための基盤です。かつては SQLite ベースで実装していましたが、現在はファイルベースの2層構成（Vault層 / local層）に移行済みです。
+Codex、Claude Code、Claude Desktop など複数の LLM クライアントから、セッションをまたいで記憶を共有するローカル基盤です。保存先は Markdown の Vault と端末ローカルの pipeline データに分かれています。
 
-## アーキテクチャ
+## できること
 
-### Vault層（memories・安定記憶）
+- クライアント間で安定した記憶を共有する
+- `get_context`、`search`、`history` で既存の記憶を参照する
+- `write_memory` でユーザーの好み、プロジェクトの決定事項、協働上の知見を保存する
+- `forget` で記憶を撤回する
+- `list_unextracted` と `mark_extracted` でセッションからの知識抽出を管理する
+- Syncthing 対象の Vault と、同期しない local / queue を分離する
+- Codex と Claude Code から同じ stdio MCP サーバーを利用する
 
-- 保存先: `$LLM_MEMORY_VAULT/memory/`（環境変数未設定時は `~/.agents/memory/vault/` にフォールバックし、stderr に警告を出す）
-- Syncthing 同期対象。Obsidian 等のノートアプリで人間が直接閲覧・編集できることを意図している
-- 1論理キー（`entity_type` + `entity_id` + `key` + `scope` + `project_id`）= 1 Markdown ファイル
-- frontmatter は `type`（`profile` / `feedback` / `reference` の3種）・`created`・`updated` のみの最小構成
-- 本文は人間可読な説明文＋任意で「## 変更履歴」セクション（値が変わった場合のみ、変更前の値と日付を追記する。新しいファイルは作らない）
-- ディレクトリ構成（`scope` ごとにグルーピング）:
-  - `memory/` 直下には生成物の `memory/_index.md` **だけ**を置く。具体的な記憶ファイルは必ず分類ディレクトリ内に置く
-  - `memory/global/<key>.md` — `scope=global`
-  - `memory/projects/<project-slug>/<key>.md` — `scope=project`
-  - `memory/clients/<entity-slug>/<key>.md` — `scope=client`
-  - `memory/temporary/<key>.md` — `scope=temporary`
-- `forget`（記憶の撤回）は物理削除ではなく、元のディレクトリ相対構造を保ったまま `memory/archive/` へファイルを移動する
-- `memory/_index.md` は全 active 記憶の索引として自動生成・維持される
+日常の読み書きは `shared-memory` MCP を使います。CLI は初期化、移行、キュー処理、診断に利用します。会話を無差別に保存する仕組みではなく、`shared-memory` / `memory-extract` スキルが長期的に有用と判断した内容を保存します。
 
-### local層（sessions/events/observations・pipeline）
+## MCP の導入
 
-- 保存先: `$LLM_MEMORY_LOCAL_DIR`（既定 `~/.agents/memory/local/`）
-- Syncthing 同期対象外（Vault とは別ディレクトリで、生ログ・中間データのため同期不要）
-- 構成: `sessions/<id>.json`（セッションメタ）、`events/<id>.jsonl`（生ログ、append-only）、`observations/<id>.jsonl`（抽出候補）、`logs/`（retrieval / deletions の監査ログ）、`queue/`（書き込み失敗時のフォールバックキュー）
+日常の読み書きは各端末で起動する `shared-memory` stdio MCP サーバーを使います。7 ツールは `get_context`、`search`、`history`、`write_memory`、`forget`、`list_unextracted`、`mark_extracted` です。CLI は初期化・移行・キュー・診断用にも維持します。
 
-## 環境変数
+これは各 OS・アプリからのアクセス経路を共通化する構成です。権限を一か所に集約するリモートサービスではありません。接続登録と各アプリの承認設定は必要です。Claude のクラウドコネクターへこの stdio サーバーを URL 登録することはできません。
 
-| 変数 | 用途 | 既定値 |
-| --- | --- | --- |
-| `LLM_MEMORY_VAULT` | Vault層の保存先（Syncthing 同期下のディレクトリを指定する想定） | 未設定時は `~/.agents/memory/vault/` にフォールバック |
-| `LLM_MEMORY_LOCAL_DIR` | local層の保存先 | `~/.agents/memory/local/` |
-| `LLM_MEMORY_QUEUE_DIR` | 書き込み失敗時のフォールバックキュー | `~/.cache/llm-memory/queue` |
+### 1. uv と依存環境
 
-## 記憶が書き込まれる2つの経路
+[uv 公式インストール手順](https://docs.astral.sh/uv/getting-started/installation/)で OS に対応した uv を導入し、`uv --version` で確認します。Windows でも Bash・make は不要です。リポジトリルートで次を実行します。
 
-### (a) ルールベース自動抽出
+```text
+uv sync --locked --project memory
+```
 
-`memory.py` 内の `build_candidates()` が、`LANGUAGE_PREFERENCES` / `EDITOR_PREFERENCES` / `OS_PREFERENCES` 等の固定辞書（例: `{"vim": "Vim", "neovim": "Neovim", ...}`）で会話テキストとの単純なキーワード一致を見る、粗いルールベース抽出です。この辞書は完全に静的なハードコードであり、共有メモリへのデータ保存によって動的に更新されることはありません。新しいキーワードを認識させるには `memory.py` のコード自体を変更する必要があります。
+MCP は `memory/pyproject.toml` と `uv.lock` の環境を使用します。旧 CLI ラッパーが選ぶシステム Python と同じ環境とは限りません。
 
-Codex 側は `codex-memory-run.sh` 経由でセッション終了時に自動実行されます。Claude Code 側は Stop hook（`hook-stop-memory.sh`）が用意されているものの `.claude/settings.json` に未配線のため、自動実行されません。
+### 2. 端末ごとの保存先設定
 
-### (b) LLM判断による書き込み
+設定ファイルは Syncthing で同期しません。既定の探索先は以下です。
 
-- `/shared-memory` スキル: 明示的なトリガー語句、またはモデルが「長期的に有効な事実」と判断した際にプロアクティブに書き込む
-- `/memory-extract` スキル: 未処理セッション（`list-unextracted`）を LLM が読み、長期的に有効な知識だけを判断して `write-memory` する、バッチ処理的な運用
-
-どちらも辞書に縛られず柔軟ですが、自動実行はされず明示的な呼び出しが必要です。
-
-## 主なファイル
-
-| ファイル | 役割 |
+| OS | 設定ファイル |
 | --- | --- |
-| `memory.py` | CLI本体。サブコマンド: `init-db` / `start-session` / `append-event` / `end-session` / `extract` / `consolidate` / `search` / `history` / `get-context` / `forget` / `queue-session` / `flush-queue` / `cleanup` / `list-unextracted` / `write-memory` / `mark-extracted` |
-| `markdown_store.py` | `MarkdownMemoryStore`。Vault層の読み書き・upsert・forget・索引生成を担当 |
-| `local_store.py` | `LocalPipelineStore`。local層（sessions/events/observations/logs）の読み書きを担当 |
-| `migrate_sqlite_to_markdown.py` | 旧SQLiteからの一括移行スクリプト。dry-run が既定で `--apply` で実際に書き込む。冪等 |
-| `test_*.py` | unittest ベースのテストスイート |
-| `run-python.sh` | PyYAML が import できる Python で引数をそのまま実行するラッパー。`memory.py` の唯一のサードパーティ依存が PyYAML であり、システムの `python3` に入っていない環境でも動くように、`LLM_MEMORY_PYTHON` → システム `python3` → `uv` → `mise x uv` の順で解決する |
-| `codex-memory-run.sh` / `codex-memory-start.sh` / `codex-memory-stop.sh` / `codex-memory-log.sh` | `codex` コマンドをラップし、セッション開始時に `start-session`、終了時（trap EXIT）に `end-session --extract --consolidate` を自動実行する |
-| `hook-stop-memory.sh` | Claude Code の Stop hook 用スクリプト。現状 `.claude/settings.json` に未配線で自動実行されない。Claude Code 側は `/shared-memory` スキル経由の手動判断による読み書きが基本 |
-| `llm-shared-memory-design.md` | 設計ドキュメント。SQLite採用の経緯、後にファイルベースへ移行した理由の記録を含む |
+| Ubuntu・macOS | `$XDG_CONFIG_HOME/llm-memory/config.toml`、未設定時 `~/.config/llm-memory/config.toml` |
+| native Windows | `%APPDATA%/llm-memory/config.toml`、未設定時 `~/AppData/Roaming/llm-memory/config.toml` |
+| 任意の OS | `LLM_MEMORY_CONFIG` を指定した場合はそのファイル |
 
-## 依存関係
+Unix の例:
 
-`memory.py` の唯一のサードパーティ依存は PyYAML（`markdown_store.py` が使用）です。システムの `python3` に PyYAML が入っていない環境（このリポジトリでは既定の macOS `python3` がそれに該当）でも動くよう、`memory.py` を直接 `python3` で呼ぶのではなく `memory/run-python.sh` 経由で呼び出してください。`run-python.sh` は以下の順で PyYAML が import できる Python を解決します:
-
-1. `LLM_MEMORY_PYTHON`（設定されていればそのまま使用）
-2. システムの `python3`（`import yaml` に成功する場合）
-3. `uv run --no-project --with pyyaml python3`
-4. `mise x uv -- uv run --no-project --with pyyaml python3`
-
-## 使用例
-
-```bash
-memory/run-python.sh memory/memory.py search --query "エディタ"
-memory/run-python.sh memory/memory.py get-context --user-id default --project-id my-project
-memory/run-python.sh memory/memory.py write-memory --session-id <id> --memory-type profile --key preferred_editor --summary "好みのエディタ: Neovim" --scope global
-memory/run-python.sh memory/memory.py forget --memory-id <id> --reason "古くなったため"
-memory/run-python.sh memory/memory.py migrate-layout
+```toml
+vault = "~/Syncthing/llm-vault"
+local_dir = "~/.agents/memory/local"
+queue_dir = "~/.cache/llm-memory/queue"
 ```
 
-`migrate-layout` は旧形式の `memory/<key>.md` を `memory/global/<key>.md` へ安全に移す一回限りの移行コマンドです。移動先に同名ファイルがある場合は上書きせずエラーにします。
+native Windows の例（ユーザー名と保存先を実環境に置換）:
 
-## テスト
+```toml
+vault = 'C:/Users/yourname/Syncthing/llm-vault'
+local_dir = 'C:/Users/yourname/.agents/memory/local'
+queue_dir = 'C:/Users/yourname/AppData/Local/llm-memory/queue'
+```
+
+`vault` は `memory/` を入れる親ディレクトリです。上の Unix 例では記憶が `~/Syncthing/llm-vault/memory/` に保存されます。
+
+優先順位は明示引数 > 環境変数 > TOML > 既定値。環境変数は `LLM_MEMORY_VAULT`、`LLM_MEMORY_LOCAL_DIR`、`LLM_MEMORY_QUEUE_DIR` です。`~` と環境変数を展開した後の絶対パスを要求し、相対パス・未展開変数・空文字・未知キー・型不正を拒否します。既定設定が存在しない場合だけ設定なしとして扱います。明示設定の不存在、既存設定の構文・読み取りエラーは停止理由です。環境変数があっても壊れた設定を無視しません。
+
+MCP は Vault の明示設定を必須とします。従来 CLI の設定なしフォールバックは互換用に残っていますが、MCP の代替として CLI を使う際は同じ明示設定を渡してください。設定変更後は MCP サーバーを再起動します。
+
+WSL と native Windows は別ホストです。Python・uv・パス・設定ファイルを分け、Windows アプリへ WSL 用の `/home/...` コマンドをそのまま登録しません。GUI はターミナルの環境変数を継承しない場合があるため、既定探索先の設定ファイルを利用するか、アプリにも同じ `LLM_MEMORY_CONFIG` を設定します。
+
+### 3. クライアント登録内容を生成
+
+Ubuntu・macOS・WSL（リポジトリルートから）:
 
 ```bash
-memory/run-python.sh -m unittest discover -s memory -p "test_*.py"
+scripts/deploy-memory-mcp.sh --client claude-code
+scripts/deploy-memory-mcp.sh --client codex
+scripts/deploy-memory-mcp.sh --client claude-desktop
 ```
+
+native Windows の PowerShell:
+
+```powershell
+& ./scripts/deploy-memory-mcp.ps1 --client claude-desktop
+& ./scripts/deploy-memory-mcp.ps1 --client codex
+```
+
+入口は uv とリポジトリの絶対パスを解決し、依存同期と起動確認後に登録内容を生成します。既定ではユーザー設定を書き換えません。生成された command/args を対象アプリへ登録します。Claude Code/Codex CLI が未導入でも Desktop 用の設定を生成できます。
+
+生成器が出力するのは `command` / `args` だけです。保存先の環境変数はアプリへ明示的に渡してください。アプリが端末の `LLM_MEMORY_*` 環境変数または既定の TOML 設定を継承する保証はありません。初回登録では、次の3変数を MCP サーバーの環境変数として登録する方法を推奨します。
+
+Claude Code の user スコープ登録（Ubuntu・WSL・macOS）:
+
+```bash
+claude mcp add -s user shared-memory \
+  -e LLM_MEMORY_VAULT=/absolute/path/to/vault \
+  -e LLM_MEMORY_LOCAL_DIR=/absolute/path/to/local \
+  -e LLM_MEMORY_QUEUE_DIR=/absolute/path/to/queue \
+  -- /absolute/path/to/uv run --locked \
+  --project /absolute/path/to/.agents/memory \
+  /absolute/path/to/.agents/memory/mcp_server.py
+```
+
+Codex は `~/.codex/config.toml` の既存の `[mcp_servers.shared-memory]` に、生成された `command` / `args` と環境変数を設定します。MCP ツールを自動実行する設定は次のとおりです。
+
+```toml
+approval_policy = "on-request"
+
+[mcp_servers.shared-memory]
+default_tools_approval_mode = "auto"
+```
+
+同じセクションの `command` / `args` と `[mcp_servers.shared-memory.env]` に、端末の絶対パスを設定してください。`approval_policy = "never"` のままだと、承認対象になった MCP ツールを実行できません。
+
+非機密の設定ファイルへ適用する場合は `--apply --config <対象ファイル>` を明示します。既存ファイルには `--non-secret-config` の申告も必要です。資格情報を含む設定をこのスクリプトで読み書きせず、生成結果をアプリ自身で登録してください。リンク先は暗黙に置換せず、必要なら実体ファイルを明示します。
+
+更新対象は `shared-memory` の command/args だけです。環境変数・タイムアウト・権限・他サーバーの設定を保持し、変更不要なら書き込みません。外部変更を検出すると停止し、適用後の検証失敗時は外部変更がない場合だけ復旧します。権限・承認設定は自動変更しません。`forget` は記憶を撤回するため、利用者が確認できる承認設定を推奨します。
+
+既存設定への適用では、生成器は環境変数・承認設定を変更しません。したがって、初回登録時は上記のクライアント固有コマンドまたはアプリの設定画面で環境変数と承認設定を登録し、生成器は command/args の更新に使います。
+
+| OS・ホスト | 対象ツール | 登録・確認 | 実機確認の扱い |
+| --- | --- | --- | --- |
+| Ubuntu / WSL | Claude Code、Codex CLI | 各 CLI に生成した stdio command/args を登録、ツール一覧を確認 | 自動試験と実クライアント確認は別。実機結果は実装計画に記録 |
+| Ubuntu | Codex / Claude Desktop | 対象版のローカル MCP 設定で登録 | GUI は未検証、対象版の対応確認が必要 |
+| macOS | Claude Code、Codex CLI / Desktop、Claude Desktop | 生成設定を各ホストへ登録 | macOS 実機は未検証 |
+| native Windows | 対応 CLI、Codex / Claude Desktop | PowerShell で生成、Windows 側ホストへ登録 | Windows 実機は未検証 |
+
+Codex は同一ホストの CLI・IDE・Desktop で MCP 設定を共有します。[Codex MCP 資料](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)を参照してください。Claude Desktop の具体的な設定場所は対象版の[ローカル MCP 手順](https://support.claude.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop)で確認します。
+
+### 4. 再起動と読み書き確認
+
+設定変更後は `resume` ではなくクライアントを完全終了して新しく起動します。Codex は `codex mcp get shared-memory`、Claude Code は `claude mcp list` で `shared-memory` が接続済み（`✔ Connected`）になり、7 ツールが列挙されることを確認します。`get_context` で既存の記憶が見えるか確認してください。初回の書き込み試験は一時 Vault/local/queue の設定で行い、`write_memory` → `search` → 不正 ID のエラー → 再検索の順に、エラー後も使えることを確認します。テスト環境の成功と本番設定の成功を混同しないでください。
+
+日常の `write_memory` は `session_id` 省略可能です。セッション抽出では元セッションの ID を必ず渡し、プロジェクトを保持します。すべての保存に成功した後だけ `mark_extracted` を呼びます。
+
+## 詳細仕様
+
+保存形式、競合と部分失敗、抽出経路、CLI の詳細、実装ファイル、依存関係、テストは [`DETAILS.md`](DETAILS.md) に分離しています。
 
 ## 関連スキル
 
-- `memory` スキル（`.claude/skills/memory/SKILL.md`）: 基盤のトラブルシューティング・DB操作全般
-- `shared-memory` スキル（`.claude/skills/shared-memory/SKILL.md`）: 日常的な読み書きインターフェース
-- `memory-extract` スキル（`.claude/skills/memory-extract/SKILL.md`）: LLMベースのセッション抽出バッチ処理
+- `memory` スキル（`.claude/skills/memory/SKILL.md`）: 基盤のトラブルシューティング・移行・診断
+- `shared-memory` スキル（`.claude/skills/shared-memory/SKILL.md`）: 日常的な読み書き
+- `memory-extract` スキル（`.claude/skills/memory-extract/SKILL.md`）: セッションからの知識抽出

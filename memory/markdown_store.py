@@ -60,6 +60,7 @@ excluded from ``iter_all()`` and ``_index.md``.
 memories (grouped by scope), regenerated on every write so that the Vault
 directory is browsable without a search tool.
 """
+
 from __future__ import annotations
 
 import os
@@ -71,6 +72,10 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+from memory_config import resolve_vault_dir as resolve_vault_dir
+from store_lock import locked, store_lock
+from store_paths import StorePathError, checked_path, validate_memory_id
 
 DEFAULT_VAULT_SUBDIR = Path(__file__).resolve().parent / "vault"
 SYNC_CONFLICT_PATTERN = re.compile(r"\.sync-conflict-")
@@ -188,23 +193,6 @@ def render_history_line(old_summary: str, new_summary: str, changed_date: str) -
     return f"{changed_date}: {_first_line(old_summary)} → {_first_line(new_summary)} に変更"
 
 
-def resolve_vault_dir(explicit: Path | None) -> tuple[Path, bool]:
-    """Resolve the Vault directory.
-
-    Returns (vault_dir, used_fallback). ``used_fallback`` is True when neither
-    an explicit path nor ``LLM_MEMORY_VAULT`` was provided, meaning the
-    per-machine fallback directory (not Syncthing-synced) is in use.
-    """
-    if explicit is not None:
-        return Path(explicit), False
-
-    env_value = os.environ.get("LLM_MEMORY_VAULT")
-    if env_value:
-        return Path(env_value), False
-
-    return DEFAULT_VAULT_SUBDIR, True
-
-
 def _parse_markdown(text: str) -> tuple[dict[str, Any], str]:
     """Split a frontmatter Markdown document into (frontmatter, body).
 
@@ -286,12 +274,30 @@ class MarkdownMemoryStore:
     """File-based store for the stable ``memories`` layer."""
 
     def __init__(self, vault_dir: Path) -> None:
-        self.vault_dir = Path(vault_dir)
+        self.vault_dir = Path(vault_dir).resolve()
         self.memory_dir = self.vault_dir / "memory"
+        checked_path(self.vault_dir, self.memory_dir)
         self.memory_dir.mkdir(parents=True, exist_ok=True)
 
+    def transaction(self, timeout: float = 30.0):
+        return store_lock(self.vault_dir, timeout)
+
+    def assert_writable(self) -> None:
+        """Public entry point for callers outside this module (e.g. the
+        one-shot SQLite migration) that must fail fast, before starting a
+        multi-step write, without reaching into a private method."""
+        self._assert_writable()
+
+    def _assert_writable(self) -> None:
+        checked_path(self.vault_dir, self.memory_dir)
+        for path in self.memory_dir.rglob("*"):
+            checked_path(self.vault_dir, path)
+        if self._warn_sync_conflicts():
+            raise StorePathError("sync-conflict files must be resolved before modifying the Vault")
+
     def _path_for_id(self, memory_id: str) -> Path:
-        return self.memory_dir / f"{memory_id}.md"
+        validate_memory_id(memory_id)
+        return checked_path(self.vault_dir, self.memory_dir / f"{memory_id}.md")
 
     def _is_archived(self, path: Path) -> bool:
         return path.relative_to(self.memory_dir).parts[0] == ARCHIVE_DIRNAME
@@ -342,8 +348,10 @@ class MarkdownMemoryStore:
         tmp_path.write_text(text, encoding="utf-8")
         os.replace(tmp_path, path)
 
+    @locked
     def write(self, record: dict[str, Any]) -> Path:
         """Atomically write a memory record to its canonical file, then refresh the index."""
+        self._assert_writable()
         path = self._path_for_id(record["id"])
         frontmatter = {
             "type": record["type"],
@@ -363,6 +371,7 @@ class MarkdownMemoryStore:
         self._write_index()
         return path
 
+    @locked
     def read(self, memory_id: str) -> dict[str, Any] | None:
         path = self._path_for_id(memory_id)
         if not path.exists():
@@ -370,6 +379,7 @@ class MarkdownMemoryStore:
         return self._read_path(path)
 
     def _read_path(self, path: Path) -> dict[str, Any]:
+        checked_path(self.vault_dir, path)
         frontmatter, body = _parse_markdown(path.read_text(encoding="utf-8"))
         title, remaining = _split_heading(body)
         summary, history = _split_history(remaining)
@@ -393,6 +403,7 @@ class MarkdownMemoryStore:
             "entity_id": entity_id,
         }
 
+    @locked
     def iter_all(self) -> list[dict[str, Any]]:
         self._warn_sync_conflicts()
         records = []
@@ -406,6 +417,7 @@ class MarkdownMemoryStore:
             records.append(self._read_path(path))
         return records
 
+    @locked
     def migrate_legacy_root_memories(self) -> list[str]:
         """Move pre-layout global memory files into ``memory/global/``.
 
@@ -414,6 +426,7 @@ class MarkdownMemoryStore:
         before retrying, then regenerates the derived index after a successful
         move.
         """
+        self._assert_writable()
         legacy_paths = sorted(
             path
             for path in self.memory_dir.glob("*.md")
@@ -423,15 +436,21 @@ class MarkdownMemoryStore:
         collisions = [destination for destination in destinations if destination.exists()]
         if collisions:
             names = ", ".join(str(path.relative_to(self.memory_dir)) for path in collisions)
-            raise FileExistsError(f"legacy layout migration would overwrite existing files: {names}")
+            raise FileExistsError(
+                f"legacy layout migration would overwrite existing files: {names}"
+            )
 
         for source, destination in zip(legacy_paths, destinations, strict=True):
+            checked_path(self.vault_dir, source)
+            checked_path(self.vault_dir, destination)
             destination.parent.mkdir(parents=True, exist_ok=True)
             os.replace(source, destination)
 
         if legacy_paths:
             self._write_index()
-        return [path.relative_to(self.memory_dir).with_suffix("").as_posix() for path in destinations]
+        return [
+            path.relative_to(self.memory_dir).with_suffix("").as_posix() for path in destinations
+        ]
 
     def _find_existing(
         self,
@@ -458,6 +477,7 @@ class MarkdownMemoryStore:
             return None
         return record
 
+    @locked
     def upsert_from_observation(
         self,
         *,
@@ -469,6 +489,7 @@ class MarkdownMemoryStore:
         project_id: str | None,
         summary: str,
     ) -> dict[str, Any]:
+        self._assert_writable()
         if scope == "project" and not project_id:
             raise ValueError(
                 f"scope='project' requires a project_id (key={key!r}); refusing to "
@@ -505,7 +526,7 @@ class MarkdownMemoryStore:
             canonical_memory_id(entity_type, entity_id, key, scope, project_id)
         )
         scope_derived, project_id_derived, entity_id_derived = _scope_info_from_id(candidate_slug)
-        record = {
+        record: dict[str, Any] = {
             "id": candidate_slug,
             "type": type,
             "created": today,
@@ -547,6 +568,7 @@ class MarkdownMemoryStore:
             suffix += 1
         return candidate
 
+    @locked
     def forget(self, memory_id: str) -> int:
         """Move a memory's file to ``memory/archive/<same relative path>``.
 
@@ -561,17 +583,21 @@ class MarkdownMemoryStore:
         version, a colliding destination is renamed via
         ``_resolve_free_archive_path`` before the move.
         """
+        self._assert_writable()
         path = self._path_for_id(memory_id)
         if not path.exists():
             return 0
         relative = path.relative_to(self.memory_dir)
         archive_path = self._resolve_free_archive_path(self.memory_dir / ARCHIVE_DIRNAME / relative)
+        checked_path(self.vault_dir, archive_path)
         archive_path.parent.mkdir(parents=True, exist_ok=True)
         os.replace(path, archive_path)
         self._write_index()
         return 1
 
+    @locked
     def delete(self, memory_id: str) -> bool:
+        self._assert_writable()
         path = self._path_for_id(memory_id)
         if not path.exists():
             return False
@@ -579,6 +605,7 @@ class MarkdownMemoryStore:
         self._write_index()
         return True
 
+    @locked
     def search(
         self,
         *,
@@ -609,6 +636,7 @@ class MarkdownMemoryStore:
         results.sort(key=lambda r: r["updated"], reverse=True)
         return results
 
+    @locked
     def get_context(self, *, project_id: str | None) -> list[dict[str, Any]]:
         """Return memories relevant to the current session: every global-scope
         memory, plus project-scoped memories for ``project_id``.
@@ -627,6 +655,12 @@ class MarkdownMemoryStore:
         matched.sort(key=lambda r: r["updated"], reverse=True)
         return matched
 
+    @locked
+    def rebuild_index(self) -> None:
+        """Recreate the derived index after synchronization or a partial failure."""
+        self._write_index()
+
+    @locked
     def _write_index(self) -> None:
         """Regenerate ``_index.md``: a human-browsable listing of (non-archived) memories.
 
@@ -635,6 +669,8 @@ class MarkdownMemoryStore:
         without running a search command. Sections mirror the on-disk
         directory grouping by ``scope`` (see the module docstring).
         """
+        self._assert_writable()
+        checked_path(self.vault_dir, self.memory_dir / INDEX_FILENAME)
         records = sorted(self.iter_all(), key=lambda r: r["title"])
         global_records = [r for r in records if r["scope"] == "global"]
         project_ids = sorted(
@@ -645,7 +681,12 @@ class MarkdownMemoryStore:
         )
         temporary_records = [r for r in records if r["scope"] == "temporary"]
 
-        lines = ["# Memory Index", "", "## Global", *(self._index_lines(global_records) or ["(none)"])]
+        lines = [
+            "# Memory Index",
+            "",
+            "## Global",
+            *(self._index_lines(global_records) or ["(none)"]),
+        ]
 
         for project_id in project_ids:
             project_records = [

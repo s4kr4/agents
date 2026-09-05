@@ -1,6 +1,6 @@
 AGENTSPATH := $(realpath $(dir $(lastword $(MAKEFILE_LIST))))
 
-.PHONY: deploy update sync-skills-claude sync-skills-codex sync-skills-claude-dry sync-skills-codex-dry memory-init memory-demo help
+.PHONY: deploy update sync-skills-claude sync-skills-codex sync-skills-claude-dry sync-skills-codex-dry memory-init memory-demo memory-mcp-check help
 
 deploy:
 	@AGENTSPATH=$(AGENTSPATH) bash $(AGENTSPATH)/scripts/deploy.sh
@@ -33,6 +33,9 @@ memory-demo:
 	@$(AGENTSPATH)/memory/run-python.sh $(AGENTSPATH)/memory/memory.py get-context --user-id default --project-id agents
 	@$(AGENTSPATH)/memory/run-python.sh $(AGENTSPATH)/memory/memory.py end-session --session-id demo --append-summary-event
 
+memory-mcp-check:
+	@AGENTSPATH=$(AGENTSPATH) bash $(AGENTSPATH)/scripts/memory-mcp-check.sh
+
 help:
 	@echo "Usage:"
 	@echo "  make deploy  - Deploy Claude Code config (CLAUDE.md, agents, skills, rules)"
@@ -43,3 +46,4 @@ help:
 	@echo "  make sync-skills-codex-dry   - Preview Codex -> Claude sync"
 	@echo "  make memory-init             - Initialize the shared memory Vault/local directories"
 	@echo "  make memory-demo             - Run a minimal shared memory demo"
+	@echo "  make memory-mcp-check        - Handshake-test the shared-memory MCP server (isolated temp storage)"

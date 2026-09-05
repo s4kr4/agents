@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Tests for LocalPipelineStore (non-Vault, per-machine sessions/events/observations/logs)."""
+
 from __future__ import annotations
 
 import os
@@ -56,15 +57,21 @@ class TestLocalPipelineStoreSessions(LocalPipelineStoreTestBase):
     """ensure_session()/get_session()/update_session() manage sessions/<id>.json."""
 
     def test_ensure_session_creates_session_file(self):
-        self.store.ensure_session("sess_1", client="claude-code", user_id="default", project_id="proj")
+        self.store.ensure_session(
+            "sess_1", client="claude-code", user_id="default", project_id="proj"
+        )
 
         path = self.local_dir / "sessions" / "sess_1.json"
         self.assertTrue(path.exists())
 
     def test_ensure_session_is_idempotent(self):
-        self.store.ensure_session("sess_1", client="claude-code", user_id="default", project_id="proj")
+        self.store.ensure_session(
+            "sess_1", client="claude-code", user_id="default", project_id="proj"
+        )
         self.store.update_session("sess_1", summary="first summary")
-        self.store.ensure_session("sess_1", client="claude-code", user_id="default", project_id="proj")
+        self.store.ensure_session(
+            "sess_1", client="claude-code", user_id="default", project_id="proj"
+        )
 
         session = self.store.get_session("sess_1")
         self.assertEqual(session["summary"], "first summary")
@@ -107,7 +114,9 @@ class TestLocalPipelineStoreSessions(LocalPipelineStoreTestBase):
         self.assertEqual(fetched["summary"], "overwritten")
 
     def test_update_session_merges_fields(self):
-        self.store.ensure_session("sess_1", client="claude-code", user_id="default", project_id="proj")
+        self.store.ensure_session(
+            "sess_1", client="claude-code", user_id="default", project_id="proj"
+        )
         self.store.update_session("sess_1", ended_at="2026-01-01T00:00:00+00:00", summary="done")
 
         session = self.store.get_session("sess_1")
@@ -123,7 +132,9 @@ class TestLocalPipelineStoreSessions(LocalPipelineStoreTestBase):
         # no summary set
 
         self.store.ensure_session("sess_c", client="c", user_id="u1", project_id=None)
-        self.store.update_session("sess_c", summary="already extracted", extracted_at="2026-01-01T00:00:00+00:00")
+        self.store.update_session(
+            "sess_c", summary="already extracted", extracted_at="2026-01-01T00:00:00+00:00"
+        )
 
         results = self.store.list_unextracted()
         ids = [s["id"] for s in results]
@@ -175,7 +186,9 @@ class TestLocalPipelineStoreEvents(LocalPipelineStoreTestBase):
 
     def test_append_event_appends_one_line_per_call(self):
         self.store.append_event("sess_1", role="user", kind="message", content="a", importance=0.5)
-        self.store.append_event("sess_1", role="assistant", kind="message", content="b", importance=0.5)
+        self.store.append_event(
+            "sess_1", role="assistant", kind="message", content="b", importance=0.5
+        )
 
         events = self.store.iter_events("sess_1")
         self.assertEqual(len(events), 2)
@@ -252,7 +265,9 @@ class TestLocalPipelineStoreObservations(LocalPipelineStoreTestBase):
 
     def test_iter_all_observations_spans_multiple_sessions(self):
         self.store.append_observation(**self._make_observation(session_id="sess_1"))
-        self.store.append_observation(**self._make_observation(session_id="sess_2", source_event_id="evt_2"))
+        self.store.append_observation(
+            **self._make_observation(session_id="sess_2", source_event_id="evt_2")
+        )
 
         self.assertEqual(len(self.store.iter_all_observations()), 2)
 
@@ -276,7 +291,9 @@ class TestLocalPipelineStoreObservations(LocalPipelineStoreTestBase):
         self.assertEqual(removed, 0)
 
     def test_remove_matching_observations_unknown_session_returns_zero(self):
-        removed = self.store.remove_matching_observations("sess_missing", attribute="recent_summary")
+        removed = self.store.remove_matching_observations(
+            "sess_missing", attribute="recent_summary"
+        )
         self.assertEqual(removed, 0)
 
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Tests for MarkdownMemoryStore (file-based memories layer, Syncthing-synced Vault)."""
+
 from __future__ import annotations
 
 import io
@@ -98,7 +99,9 @@ class TestCanonicalMemoryId(unittest.TestCase):
 
     def test_different_key_produces_different_id(self):
         first = canonical_memory_id("user", "default", "preferred_editor", "global", None)
-        second = canonical_memory_id("user", "default", "preferred_language_runtime", "global", None)
+        second = canonical_memory_id(
+            "user", "default", "preferred_language_runtime", "global", None
+        )
         self.assertNotEqual(first, second)
 
     def test_different_project_id_produces_different_id(self):
@@ -151,8 +154,12 @@ class TestCanonicalMemoryIdDirectoryLayout(unittest.TestCase):
         self.assertEqual(generated, "temporary/scratch-note")
 
     def test_same_logical_key_always_resolves_to_the_same_directory_and_slug(self):
-        first = canonical_memory_id("user", "default", "db_migration_status", "project", "myproject")
-        second = canonical_memory_id("user", "default", "db_migration_status", "project", "myproject")
+        first = canonical_memory_id(
+            "user", "default", "db_migration_status", "project", "myproject"
+        )
+        second = canonical_memory_id(
+            "user", "default", "db_migration_status", "project", "myproject"
+        )
         self.assertEqual(first, second)
 
 
@@ -171,7 +178,8 @@ class TestHistoryLineRendering(unittest.TestCase):
         new_summary = "コミットメッセージは簡潔に書く\n\n**Why:** ...\n**How to apply:** ..."
         line = render_history_line(old_summary, new_summary, "2026-06-20")
         self.assertEqual(
-            line, "2026-06-20: コミットメッセージは詳細に書く → コミットメッセージは簡潔に書く に変更"
+            line,
+            "2026-06-20: コミットメッセージは詳細に書く → コミットメッセージは簡潔に書く に変更",
         )
 
 
@@ -292,7 +300,7 @@ class TestMarkdownMemoryStoreWriteRead(MarkdownMemoryStoreTestBase):
         self.assertEqual(leftover_tmp, [])
 
     def test_read_returns_none_for_missing_id(self):
-        result = self.store.read("does-not-exist")
+        result = self.store.read("global/does-not-exist")
         self.assertIsNone(result)
 
     def test_read_roundtrip_survives_embedded_horizontal_rule_in_summary(self):
@@ -454,16 +462,11 @@ class TestMarkdownMemoryStoreDirectoryLayout(MarkdownMemoryStoreTestBase):
 class TestLegacyRootLayoutMigration(MarkdownMemoryStoreTestBase):
     def test_moves_legacy_root_memory_into_global_directory_and_refreshes_index(self):
         legacy_path = self.vault_dir / "memory" / "preferred-editor.md"
-        self.store.write(
-            {
-                "id": "preferred-editor",
-                "type": "profile",
-                "created": "2026-08-06",
-                "updated": "2026-08-06",
-                "title": "Preferred Editor",
-                "summary": "好みのエディタ: Neovim",
-                "history": [],
-            }
+        # Construct the pre-layout fixture without using the active-memory API.
+        legacy_path.write_text(
+            "---\ntype: profile\ncreated: 2026-08-06\nupdated: 2026-08-06\n---\n\n"
+            "# Preferred Editor\n\n好みのエディタ: Neovim\n",
+            encoding="utf-8",
         )
 
         moved = self.store.migrate_legacy_root_memories()
@@ -471,7 +474,9 @@ class TestLegacyRootLayoutMigration(MarkdownMemoryStoreTestBase):
         self.assertEqual(moved, ["global/preferred-editor"])
         self.assertFalse(legacy_path.exists())
         self.assertTrue((self.vault_dir / "memory" / "global" / "preferred-editor.md").exists())
-        self.assertIn("global/preferred-editor.md", (self.vault_dir / "memory" / INDEX_FILENAME).read_text())
+        self.assertIn(
+            "global/preferred-editor.md", (self.vault_dir / "memory" / INDEX_FILENAME).read_text()
+        )
         self.assertEqual(len(_all_memory_files(self.vault_dir / "memory")), 1)
 
 
@@ -525,7 +530,9 @@ class TestMarkdownMemoryStoreUpsert(MarkdownMemoryStoreTestBase):
         files = _non_index_files(self.vault_dir / "memory")
         self.assertEqual(len(files), 1)
 
-        fetched = self.store.read(canonical_memory_id("user", "default", "preferred_editor", "global", None))
+        fetched = self.store.read(
+            canonical_memory_id("user", "default", "preferred_editor", "global", None)
+        )
         self.assertEqual(fetched["summary"], "好みのエディタ: VSCode")
         self.assertEqual(len(fetched["history"]), 1)
         self.assertIn("Neovim", fetched["history"][0])
@@ -645,7 +652,7 @@ class TestMarkdownMemoryStoreForget(MarkdownMemoryStoreTestBase):
         self.assertNotIn(created["id"], ids)
 
     def test_forget_unknown_id_returns_zero(self):
-        moved = self.store.forget("unknown-key")
+        moved = self.store.forget("global/unknown-key")
         self.assertEqual(moved, 0)
 
     def test_forgetting_twice_returns_zero_the_second_time(self):
@@ -815,7 +822,7 @@ class TestMarkdownMemoryStoreDelete(MarkdownMemoryStoreTestBase):
         self.assertIsNone(self.store.read(created["id"]))
 
     def test_delete_unknown_id_returns_false(self):
-        removed = self.store.delete("unknown-key")
+        removed = self.store.delete("global/unknown-key")
         self.assertFalse(removed)
 
 

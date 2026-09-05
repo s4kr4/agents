@@ -6,6 +6,12 @@ set -euo pipefail
 # システムの python3 には入っていないことがあるため、利用可能な
 # 実行手段を優先順位付きで探索する。
 
+# uv/mise フォールバックで使うロック済み環境。MCP・全テストと同じ
+# memory/pyproject.toml + uv.lock を使うことで、旧来の "--no-project
+# --with pyyaml" が呼ぶたび使い捨てで用意していた依存とは異なるバー
+# ジョンの PyYAML を CLI が使ってしまう事態を避ける（D7 参照）。
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # 1. 明示指定があればそれを無条件で使う
 if [ -n "${LLM_MEMORY_PYTHON:-}" ]; then
   exec "${LLM_MEMORY_PYTHON}" "$@"
@@ -16,14 +22,14 @@ if (cd / && python3 -c 'import yaml') >/dev/null 2>&1; then
   exec python3 "$@"
 fi
 
-# 3. uv があれば PyYAML を同梱した使い捨て環境で実行する
+# 3. uv があればロック済み memory/ project 環境で実行する
 if command -v uv >/dev/null 2>&1; then
-  exec uv run --quiet --no-project --with pyyaml python3 "$@"
+  exec uv run --quiet --locked --project "${SCRIPT_DIR}" python3 "$@"
 fi
 
 # 4. mise 経由で uv を解決できればそれを使う
 if [ -x "${HOME}/.local/bin/mise" ]; then
-  exec "${HOME}/.local/bin/mise" x uv -- uv run --quiet --no-project --with pyyaml python3 "$@"
+  exec "${HOME}/.local/bin/mise" x uv -- uv run --quiet --locked --project "${SCRIPT_DIR}" python3 "$@"
 fi
 
 echo "error: PyYAML を import できる Python が見つかりませんでした。" >&2

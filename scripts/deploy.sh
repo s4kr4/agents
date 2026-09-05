@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-AGENTSPATH="${AGENTSPATH:-$HOME/workspace/agents}"
+AGENTSPATH="${AGENTSPATH:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}"
 
 link_file() {
     local src="$1"

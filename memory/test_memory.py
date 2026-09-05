@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Tests for the memory.py CLI (file-based Vault + local pipeline stores)."""
+
 from __future__ import annotations
 
 import argparse
@@ -10,10 +11,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import memory as mem
 from local_store import LocalPipelineStore
 from markdown_store import MarkdownMemoryStore
-
-import memory as mem
 
 
 class CliTestBase(unittest.TestCase):
@@ -127,7 +127,9 @@ class TestCmdEndSession(CliTestBase):
             mem.cmd_end_session(args)
 
     def test_extract_and_consolidate_creates_active_memory(self):
-        self.local_store.ensure_session("sess_1", client="claude-code", user_id="u1", project_id="p1")
+        self.local_store.ensure_session(
+            "sess_1", client="claude-code", user_id="u1", project_id="p1"
+        )
         self.local_store.append_event(
             "sess_1", role="user", kind="message", content="I like Neovim", importance=0.5
         )
@@ -150,7 +152,9 @@ class TestCmdEndSession(CliTestBase):
         self.assertIn("Preferred Editor", titles)
 
     def test_append_summary_event_adds_summary_event(self):
-        self.local_store.ensure_session("sess_1", client="claude-code", user_id="u1", project_id="p1")
+        self.local_store.ensure_session(
+            "sess_1", client="claude-code", user_id="u1", project_id="p1"
+        )
 
         self.run_cmd(
             mem.cmd_end_session,
@@ -380,8 +384,16 @@ class TestCmdSearch(CliTestBase):
     def test_search_returns_matching_memory(self):
         self._seed_memory()
 
-        result = self.run_cmd(mem.cmd_search, session_id=None, query="editor", entity_id=None,
-                               memory_type=None, scope=None, project_id=None, limit=10)
+        result = self.run_cmd(
+            mem.cmd_search,
+            session_id=None,
+            query="editor",
+            entity_id=None,
+            memory_type=None,
+            scope=None,
+            project_id=None,
+            limit=10,
+        )
 
         self.assertTrue(result["ok"])
         self.assertEqual(result["count"], 1)
@@ -390,8 +402,16 @@ class TestCmdSearch(CliTestBase):
     def test_search_logs_retrieval_when_session_id_given(self):
         self._seed_memory()
 
-        self.run_cmd(mem.cmd_search, session_id="sess_1", query="editor", entity_id=None,
-                      memory_type=None, scope=None, project_id=None, limit=10)
+        self.run_cmd(
+            mem.cmd_search,
+            session_id="sess_1",
+            query="editor",
+            entity_id=None,
+            memory_type=None,
+            scope=None,
+            project_id=None,
+            limit=10,
+        )
 
         path = self.local_dir / "logs" / "retrieval.jsonl"
         self.assertTrue(path.exists())
@@ -400,8 +420,16 @@ class TestCmdSearch(CliTestBase):
         self._seed_memory(key="a", summary="a")
         self._seed_memory(key="b", summary="b")
 
-        result = self.run_cmd(mem.cmd_search, session_id=None, query=None, entity_id=None,
-                               memory_type=None, scope=None, project_id=None, limit=1)
+        result = self.run_cmd(
+            mem.cmd_search,
+            session_id=None,
+            query=None,
+            entity_id=None,
+            memory_type=None,
+            scope=None,
+            project_id=None,
+            limit=1,
+        )
         self.assertEqual(result["count"], 1)
 
 
@@ -472,7 +500,7 @@ class TestQueueSession(unittest.TestCase):
         defaults.update(kwargs)
         args = argparse.Namespace(**defaults)
 
-        with patch.object(mem, "QUEUE_DIR", queue_dir):
+        with patch.object(mem, "resolve_queue_dir", return_value=queue_dir):
             captured = io.StringIO()
             with patch("sys.stdout", captured):
                 mem.cmd_queue_session(args)
@@ -533,7 +561,7 @@ class TestFlushQueue(CliTestBase):
         return fname
 
     def _run_flush(self, queue_dir: Path) -> dict:
-        with patch.object(mem, "QUEUE_DIR", queue_dir):
+        with patch.object(mem, "resolve_queue_dir", return_value=queue_dir):
             return self.run_cmd(mem.cmd_flush_queue)
 
     def test_flush_queue_empty_queue(self):
@@ -633,7 +661,7 @@ class TestFlushQueueIfPossible(unittest.TestCase):
             vault_dir = Path(tmpdir) / "vault"
             local_dir = Path(tmpdir) / "local"
             queue_dir = Path(tmpdir) / "queue"
-            with patch.object(mem, "QUEUE_DIR", queue_dir):
+            with patch.object(mem, "resolve_queue_dir", return_value=queue_dir):
                 result = mem.flush_queue_if_possible(vault_dir, local_dir)
             self.assertEqual(result, 0)
 
@@ -655,7 +683,7 @@ class TestFlushQueueIfPossible(unittest.TestCase):
             }
             (queue_dir / "one.jsonl").write_text(json.dumps(payload) + "\n", encoding="utf-8")
 
-            with patch.object(mem, "QUEUE_DIR", queue_dir):
+            with patch.object(mem, "resolve_queue_dir", return_value=queue_dir):
                 result = mem.flush_queue_if_possible(vault_dir, local_dir)
 
             self.assertEqual(result, 1)
@@ -666,7 +694,7 @@ class TestFlushQueueIfPossible(unittest.TestCase):
                 queue_dir = Path(tmpdir) / "queue"
                 queue_dir.mkdir(parents=True)
                 (queue_dir / "one.jsonl").write_text('{"session_id": "s"}\n', encoding="utf-8")
-                with patch.object(mem, "QUEUE_DIR", queue_dir):
+                with patch.object(mem, "resolve_queue_dir", return_value=queue_dir):
                     result = mem.flush_queue_if_possible(Path("/some/vault"), Path("/some/local"))
             self.assertEqual(result, 0)
 
@@ -784,7 +812,9 @@ class TestListUnextractedSubcommand(unittest.TestCase):
 
 class TestListUnextractedCmd(CliTestBase):
     def test_returns_ok_and_sessions(self):
-        self.local_store.ensure_session("sess_lu01", client="claude-code", user_id="u1", project_id=None)
+        self.local_store.ensure_session(
+            "sess_lu01", client="claude-code", user_id="u1", project_id=None
+        )
         self.local_store.update_session("sess_lu01", summary="some summary")
 
         result = self.run_cmd(mem.cmd_list_unextracted, limit=10)
@@ -794,7 +824,9 @@ class TestListUnextractedCmd(CliTestBase):
         self.assertIn("sess_lu01", ids)
 
     def test_excludes_already_extracted(self):
-        self.local_store.ensure_session("sess_done01", client="claude-code", user_id="u1", project_id=None)
+        self.local_store.ensure_session(
+            "sess_done01", client="claude-code", user_id="u1", project_id=None
+        )
         self.local_store.update_session("sess_done01", summary="done")
         self.local_store.mark_extracted("sess_done01")
 
@@ -809,26 +841,38 @@ class TestWriteMemorySubcommand(unittest.TestCase):
 
     def test_write_memory_subcommand_exists(self):
         parser = mem.build_parser()
-        args = parser.parse_args([
-            "write-memory",
-            "--session-id", "sess_test01",
-            "--memory-type", "profile",
-            "--key", "preferred_editor",
-            "--summary", "好みのエディタ: Neovim",
-        ])
+        args = parser.parse_args(
+            [
+                "write-memory",
+                "--session-id",
+                "sess_test01",
+                "--memory-type",
+                "profile",
+                "--key",
+                "preferred_editor",
+                "--summary",
+                "好みのエディタ: Neovim",
+            ]
+        )
         self.assertEqual(args.command, "write-memory")
         self.assertTrue(callable(args.func))
         self.assertIs(args.func, mem.cmd_write_memory)
 
     def test_write_memory_default_confidence_and_scope(self):
         parser = mem.build_parser()
-        args = parser.parse_args([
-            "write-memory",
-            "--session-id", "sess_test02",
-            "--memory-type", "feedback",
-            "--key", "response_language",
-            "--summary", "応答は日本語で行う",
-        ])
+        args = parser.parse_args(
+            [
+                "write-memory",
+                "--session-id",
+                "sess_test02",
+                "--memory-type",
+                "feedback",
+                "--key",
+                "response_language",
+                "--summary",
+                "応答は日本語で行う",
+            ]
+        )
         self.assertAlmostEqual(args.confidence, 0.8)
         self.assertEqual(args.scope, "global")
         self.assertEqual(args.entity_type, "user")

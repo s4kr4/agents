@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Tests for the one-shot SQLite -> Markdown/local-files migration script."""
+
 from __future__ import annotations
 
 import json
@@ -78,9 +79,7 @@ def _build_fixture_db(db_path: Path) -> None:
         "'2024-01-01T00:01:00+00:00','2023-12-01T00:00:00+00:00','2024-01-01T00:01:00+00:00')",
         (json.dumps({"value": "Vim"}),),
     )
-    conn.execute(
-        "INSERT INTO memory_sources VALUES('mem_active_1','obs_1',0.7)"
-    )
+    conn.execute("INSERT INTO memory_sources VALUES('mem_active_1','obs_1',0.7)")
     conn.commit()
     conn.close()
 
@@ -102,7 +101,11 @@ class TestMigrateDryRun(MigrateTestBase):
     def test_dry_run_does_not_write_any_files(self):
         migrate(self.db_path, self.vault_dir, self.local_dir, apply=False)
 
-        self.assertFalse((self.vault_dir / "memory").exists() and any((self.vault_dir / "memory").iterdir()) if (self.vault_dir / "memory").exists() else False)
+        self.assertFalse(
+            (self.vault_dir / "memory").exists() and any((self.vault_dir / "memory").iterdir())
+            if (self.vault_dir / "memory").exists()
+            else False
+        )
         self.assertFalse(self.local_dir.exists())
 
     def test_dry_run_reports_planned_counts(self):
@@ -243,7 +246,9 @@ class TestMigrateEvidenceExcerpt(unittest.TestCase):
         self.assertIn(short_evidence, record["summary"])
 
     def test_evidence_that_looks_like_a_tag_dump_is_omitted_not_truncated_mid_tag(self):
-        log_like_evidence = "<task-notification>background task finished successfully</task-notification>"
+        log_like_evidence = (
+            "<task-notification>background task finished successfully</task-notification>"
+        )
         _build_fixture_db_with_long_evidence(self.db_path, log_like_evidence)
 
         migrate(self.db_path, self.vault_dir, self.local_dir, apply=True)
@@ -385,7 +390,9 @@ class TestMigrateHistoryDeduplication(unittest.TestCase):
         migrate(self.db_path, self.vault_dir, self.local_dir, apply=True)
 
         markdown_store = MarkdownMemoryStore(self.vault_dir)
-        expected_id = canonical_memory_id("user", "u1", "preferred_language_runtime", "global", None)
+        expected_id = canonical_memory_id(
+            "user", "u1", "preferred_language_runtime", "global", None
+        )
 
         record = markdown_store.read(expected_id)
         self.assertIsNotNone(record)

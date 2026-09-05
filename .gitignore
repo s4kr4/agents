@@ -10,3 +10,6 @@ memory/vault/
 memory/local.bak*/
 memory/vault.bak*/
 memory/test_memory.py.bak
+memory/.venv/
+.mypy_cache/
+.ruff_cache/
