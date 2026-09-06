@@ -24,8 +24,8 @@ description: Code investigation and impact analysis specialist. This agent explo
 **担当外**（他のエージェントへ委任）:
 
 - 実装計画の策定 → ``code-planner``
-- バックエンド API 実装 → ``web-api-implementer``
-- フロントエンド UI 実装 → ``web-ui-implementer``
+- failing テストの作成 → `@tester`
+- 実装 → `@implementer`
 - コード検証 → ``code-safety-inspector``
 - 設計決定（提案はするが、最終決定はしない）
 
