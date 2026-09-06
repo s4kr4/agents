@@ -8,7 +8,7 @@ import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -17,12 +17,12 @@ from markdown_store import (
     INDEX_FILENAME,
     MarkdownMemoryStore,
     canonical_memory_id,
+    current_timestamp,
     format_history_date,
     humanize_key,
     render_history_line,
     resolve_vault_dir,
     slugify,
-    today_date,
 )
 
 
@@ -68,25 +68,19 @@ class TestHumanizeKey(unittest.TestCase):
         self.assertEqual(humanize_key("summary"), "Summary")
 
 
-class TestTodayDate(unittest.TestCase):
-    """today_date() returns a date-only (no time-of-day) ISO string."""
+class TestCurrentTimestamp(unittest.TestCase):
+    def test_returns_seconds_and_timezone(self):
+        self.assertRegex(
+            current_timestamp(),
+            r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$",
+        )
 
-    def test_returns_date_only_format(self):
-        value = today_date()
-        self.assertRegex(value, r"^\d{4}-\d{2}-\d{2}$")
-
-    def test_uses_the_local_wall_clock_date_rather_than_utc(self):
-        # A JST (UTC+9) user writing a memory at 08:30 local time on
-        # 2026-01-02 is on the same UTC calendar day as 2026-01-01 23:30 UTC;
-        # today_date() must report the local date (2026-01-02), not UTC's.
-        local_now = datetime(2026, 1, 2, 8, 30)
+    def test_preserves_local_time_and_offset(self):
+        local_now = datetime(2026, 1, 2, 8, 30, 45, 123456, timezone(timedelta(hours=9)))
         with patch("markdown_store.datetime") as mock_datetime:
-            mock_datetime.now.return_value = local_now
-
-            value = today_date()
-
-        mock_datetime.now.assert_called_once_with()
-        self.assertEqual(value, "2026-01-02")
+            mock_datetime.now.return_value.astimezone.return_value = local_now
+            value = current_timestamp()
+        self.assertEqual(value, "2026-01-02T08:30:45+09:00")
 
 
 class TestCanonicalMemoryId(unittest.TestCase):
@@ -234,6 +228,27 @@ class MarkdownMemoryStoreTestBase(unittest.TestCase):
 
 class TestMarkdownMemoryStoreWriteRead(MarkdownMemoryStoreTestBase):
     """write()/read() round-trip preserves the minimal frontmatter and the summary body."""
+
+    def test_creation_and_same_day_update_persist_timestamps(self):
+        with patch("markdown_store.current_timestamp", return_value="2026-01-01T08:30:00+09:00"):
+            first = self._upsert()
+        self.assertEqual(first["created"], "2026-01-01T08:30:00+09:00")
+        self.assertEqual(first["updated"], first["created"])
+        with patch("markdown_store.current_timestamp", return_value="2026-01-01T09:30:00+09:00"):
+            second = self._upsert(summary="好みのエディタ: VSCode")
+        fetched = self.store.read(second["id"])
+        self.assertEqual(fetched["created"], first["created"])
+        self.assertEqual(fetched["updated"], "2026-01-01T09:30:00+09:00")
+
+    def test_updating_legacy_record_preserves_unknown_creation_time(self):
+        first = self._upsert()
+        first["created"] = first["updated"] = "2026-01-01"
+        self.store.write(first)
+        with patch("markdown_store.current_timestamp", return_value="2026-01-02T09:30:00+09:00"):
+            second = self._upsert(summary="好みのエディタ: VSCode")
+        fetched = self.store.read(second["id"])
+        self.assertEqual(fetched["created"], "2026-01-01")
+        self.assertEqual(fetched["updated"], "2026-01-02T09:30:00+09:00")
 
     def test_memory_dir_is_created_under_vault(self):
         self.assertTrue((self.vault_dir / "memory").is_dir())
@@ -498,21 +513,21 @@ class TestMarkdownMemoryStoreUpsert(MarkdownMemoryStoreTestBase):
         self.assertEqual(len(files), 1)
 
     def test_same_summary_and_type_does_not_bump_updated_date(self):
-        with patch("markdown_store.today_date", return_value="2026-01-01"):
+        with patch("markdown_store.current_timestamp", return_value="2026-01-01T08:30:00+09:00"):
             first = self._upsert()
-        with patch("markdown_store.today_date", return_value="2026-01-02"):
+        with patch("markdown_store.current_timestamp", return_value="2026-01-01T09:30:00+09:00"):
             second = self._upsert()
 
-        self.assertEqual(first["updated"], "2026-01-01")
-        self.assertEqual(second["updated"], "2026-01-01")
+        self.assertEqual(first["updated"], "2026-01-01T08:30:00+09:00")
+        self.assertEqual(second["updated"], "2026-01-01T08:30:00+09:00")
 
     def test_changed_type_with_same_summary_bumps_updated_date(self):
-        with patch("markdown_store.today_date", return_value="2026-01-01"):
+        with patch("markdown_store.current_timestamp", return_value="2026-01-01T08:30:00+09:00"):
             self._upsert(type="profile")
-        with patch("markdown_store.today_date", return_value="2026-01-02"):
+        with patch("markdown_store.current_timestamp", return_value="2026-01-01T09:30:00+09:00"):
             second = self._upsert(type="feedback")
 
-        self.assertEqual(second["updated"], "2026-01-02")
+        self.assertEqual(second["updated"], "2026-01-01T09:30:00+09:00")
 
     def test_different_summary_updates_the_same_file_in_place(self):
         self._upsert(summary="好みのエディタ: Neovim")

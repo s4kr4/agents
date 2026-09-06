@@ -341,8 +341,8 @@ $LLM_MEMORY_VAULT/memory/
 ```markdown
 ---
 type: profile
-created: '2026-07-01'
-updated: '2026-08-01'
+created: '2026-07-01T09:00:00+09:00'
+updated: '2026-08-01T14:30:00+09:00'
 ---
 
 # Primary Os
@@ -406,7 +406,7 @@ updated: '2026-08-01'
   「安定記憶」向きではない情報）は3分類のどれにもきれいには収まらず、
   `reference` へ次善の割り当てをしている（`migrate_sqlite_to_markdown.py`
   の `_MEMORY_TYPE_TO_TYPE` 参照）。
-- `created`/`updated`: 日付のみ（時刻精度は持たない）。
+- `created`/`updated`: 秒・UTC オフセット付きのローカル日時。既存の日付のみの値も読み取れ、更新時も作成日時は維持する。
 
 `entity_type`/`entity_id`/`key`/`value` はもう frontmatter に永続化されず、
 `upsert_from_observation()` 呼び出し時の一時的な引数としてのみ使われる

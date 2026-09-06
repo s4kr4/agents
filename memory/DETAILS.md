@@ -9,6 +9,7 @@
 - 保存先: 明示設定の Vault 配下の `memory/`（設定方法は下記。設定なしの従来 CLI のみ `~/.agents/memory/vault/` へフォールバック）
 - Syncthing 同期対象。Obsidian 等のノートアプリで人間が直接閲覧・編集できることを意図している
 - 1論理キー（`entity_type` + `entity_id` + `key` + `scope` + `project_id`）= 1 Markdown ファイル
+- 新規保存の `created` / `updated` は秒・UTC オフセット付きのローカル日時（例: `2026-09-06T14:30:00+09:00`）。更新時は `created` を維持し、本文または type が変わった場合だけ `updated` を更新する。既存の日付のみの値は読み取り可能で、不明な過去の時刻は補完しない。本文の変更履歴は従来どおり日付単位。
 - frontmatter は `type`（`profile` / `feedback` / `reference` の3種）・`created`・`updated` のみの最小構成
 - 本文は人間可読な説明文＋任意で「## 変更履歴」セクション（値が変わった場合のみ、変更前の値と日付を追記する。新しいファイルは作らない）
 - ディレクトリ構成（`scope` ごとにグルーピング）:

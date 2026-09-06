@@ -42,7 +42,7 @@ curating notes actually needs:
 
 - ``type``: ``profile`` (静的事実) / ``feedback`` (協働のしかたの学び) /
   ``reference`` (外部システムへのポインタ)
-- ``created`` / ``updated``: dates only (no time-of-day precision)
+- ``created`` / ``updated``: local ISO-8601 timestamps with seconds and UTC offset
 
 Everything else -- the value itself, its evidence, its category -- lives in
 the body's plain prose, where a human (or the LLM) can read it naturally.
@@ -88,14 +88,9 @@ _SLUG_MULTI_DASH = re.compile(r"-+")
 _KEY_WORD_SPLIT = re.compile(r"[_\-\s]+")
 
 
-def today_date() -> str:
-    """Return today's local (wall-clock) date as ``YYYY-MM-DD``.
-
-    Frontmatter needs no time-of-day, and using the machine's local
-    timezone (rather than UTC) avoids misdating a memory written in the
-    early morning JST (or any timezone ahead of UTC) as the previous day.
-    """
-    return datetime.now().date().isoformat()
+def current_timestamp() -> str:
+    """Return local ISO-8601 date/time with seconds and an explicit UTC offset."""
+    return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
 def slugify(text: str) -> str:
@@ -497,7 +492,7 @@ class MarkdownMemoryStore:
             )
 
         existing = self._find_existing(entity_type, entity_id, key, scope, project_id)
-        today = today_date()
+        timestamp = current_timestamp()
 
         if existing is not None:
             if existing["summary"] == summary:
@@ -505,7 +500,7 @@ class MarkdownMemoryStore:
                 # bumping `updated` here regardless would misleadingly imply
                 # the memory's content was refreshed.
                 if existing.get("type") != type:
-                    existing["updated"] = today
+                    existing["updated"] = timestamp
                 existing["type"] = type
                 self.write(existing)
                 return existing
@@ -514,11 +509,13 @@ class MarkdownMemoryStore:
             # history section (rather than archiving it to a separate file)
             # and overwrite the body/frontmatter in place with the new
             # current content.
-            history_line = render_history_line(existing["summary"], summary, today)
+            history_line = render_history_line(
+                existing["summary"], summary, format_history_date(timestamp)
+            )
             existing["history"] = [*existing.get("history", []), history_line]
             existing["type"] = type
             existing["summary"] = summary
-            existing["updated"] = today
+            existing["updated"] = timestamp
             self.write(existing)
             return existing
 
@@ -529,8 +526,8 @@ class MarkdownMemoryStore:
         record: dict[str, Any] = {
             "id": candidate_slug,
             "type": type,
-            "created": today,
-            "updated": today,
+            "created": timestamp,
+            "updated": timestamp,
             "title": humanize_key(key),
             "summary": summary,
             "history": [],
@@ -555,7 +552,7 @@ class MarkdownMemoryStore:
         if not archive_path.exists():
             return archive_path
 
-        # Local time, to match `today_date()`'s frontmatter `created`/`updated`
+        # Local time, to match `current_timestamp()`'s frontmatter `created`/`updated`
         # dates -- mixing UTC here and local time there would make an
         # archive's timestamp suffix look inconsistent with its own frontmatter.
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
