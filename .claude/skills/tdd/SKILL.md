@@ -24,8 +24,8 @@ description: TDD（テスト駆動開発）の手順とベストプラクティ�
 ### 手順
 
 1. 承認済み計画からスコープを確認（API / UI / CLI・スクリプト・ライブラリ）
-2. 対応する tester に委譲（「呼び分け表」参照）:
-   - 入力: **フェーズの明示（Phase 3a / RED）**、**RED 種別の判定結果（「🧭 RED の種別」参照）**、**参照するドメイン固有スキル**（`/api-test` / `/ui-test` / `/py-implement` 等）、完了条件（振る舞い記述）、対象ファイル、既存パターン
+2. `@tester` に委譲:
+   - 入力: **フェーズの明示（Phase 3a / RED）**、**RED 種別の判定結果（「🧭 RED の種別」参照）**、**参照するドメイン固有スキル**（「スキル指定表」参照）、完了条件（振る舞い記述）、対象ファイル、既存パターン
    - 委譲プロンプトに「実データに書き込まない」制約と、環境変数で保存先が決まる場合の明示上書きを含める
 3. tester からのレポートを受領:
    - テストファイル一覧
@@ -35,21 +35,22 @@ description: TDD（テスト駆動開発）の手順とベストプラクティ�
      - behavior: 全ケース failing の実行ログ
      - static diagnostic: 対象診断（compiler / lint / deprecation）の検出ログ
      - characterization baseline: baseline テストが GREEN で通過している実行ログ
-4. レポートを添えて implementer に委譲（「呼び分け表」参照）:
-   - 入力: **フェーズの明示（Phase 3b / GREEN）**、tester レポート、承認済み計画のスコープ、**参照するドメイン固有スキル**（`/ts-implement` / `/react-implement` / `/py-implement` 等）
+4. レポートを添えて `@implementer` に委譲:
+   - 入力: **フェーズの明示（Phase 3b / GREEN）**、tester レポート、承認済み計画のスコープ、**参照するドメイン固有スキル**（「スキル指定表」参照）
 5. implementer から「GREEN 達成」レポートを受領
 6. 後続フェーズ（UI 検証 or safety inspector）へ
 
-### 呼び分け表
+### スキル指定表
 
-tester / implementer はドメインを問わず `@tester` / `@implementer` を使い、ドメイン固有スキルを委譲プロンプトで指定する。
+委譲プロンプトで指定するドメイン固有スキル。
 
-| スコープ | tester | implementer | 委譲時に指定するスキル |
-|---------|--------|-------------|------------------------|
-| バックエンド API | `@tester` | `@implementer` | tester: `/api-test`、implementer: `/ts-implement` または `/py-implement` |
-| フロントエンド UI | `@tester` | `@implementer` | tester: `/ui-test`、implementer: `/ts-implement`, `/react-implement` |
-| API + UI 両方 | API 側を先に完結してから UI 側へ | 同左 | 同上 |
-| CLI / スクリプト / ライブラリ | `@tester` | `@implementer` | 言語に応じて `/py-implement` / `/ts-implement`。シェルは既存スタイル踏襲 |
+| スコープ | tester に指定 | implementer に指定 |
+|---------|--------------|-------------------|
+| バックエンド API | `/api-test` | `/ts-implement` または `/py-implement` |
+| フロントエンド UI | `/ui-test` | `/ts-implement`, `/react-implement` |
+| CLI / スクリプト / ライブラリ | 言語に応じて `/py-implement` / `/ts-implement` のテスト規約。シェルは既存スタイル踏襲 | 言語に応じて `/py-implement` / `/ts-implement`。シェルは既存スタイル踏襲 |
+
+API + UI 両方を含む場合は API 側を先に完結してから UI 側へ進む。
 
 多層変更（ストア → CLI → MCP など）は承認済み計画のタスク単位で RED → GREEN を繰り返してよい。ただし各タスク内でも tester が先に failing テストを作り、implementer はテストを編集しない。
 

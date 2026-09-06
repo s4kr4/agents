@@ -20,7 +20,7 @@
 
 - 新設: `.claude/agents/tester.md`、`.claude/agents/implementer.md`（ドメイン非依存。ドメイン固有スキルは委譲プロンプトで指定し、エージェントが `Read` で読む）
 - `~/.claude/rules/development-workflow.md`: Phase 3a / 3b とパターン 1〜6、フィードバックループ、Related Resources を `@tester` / `@implementer` に統一。CLI 例外の記述は除去し、分離を non-web にも適用する理由を注記
-- `~/.claude/skills/tdd/SKILL.md`: 早期判定と呼び分け表を役割ベースへ、fixture に非正規形入力を含める指針を追加
+- `~/.claude/skills/tdd/SKILL.md`: 早期判定を役割ベースへ、呼び分け表をスキル指定表に置き換え、fixture に非正規形入力を含める指針を追加
 - `~/.claude/rules/tdd.md`: 例外の適用条件を `@tester` / `@implementer` に変更
 - 旧定義（`web-api-*`、`web-ui-*`、`general-implementer`）はユーザー確認のうえ削除した（`.codex/skills/general-implementer/` の Codex 側ミラーは同期スクリプトの対象外のため別途整理）
 
