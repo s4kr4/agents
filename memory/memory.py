@@ -25,9 +25,9 @@ from pathlib import Path
 from typing import Any
 
 from local_store import LocalPipelineStore, new_id, utc_now
-from markdown_store import MarkdownMemoryStore, humanize_key
+from markdown_store import MarkdownMemoryStore, humanize_key, normalize_tags
 from memory_config import MemoryConfigError, resolve_paths, resolve_queue_dir
-from store_paths import StorePathError, validate_component
+from store_paths import StorePathError, validate_component, validate_memory_id
 
 
 class MemoryUsageError(ValueError):
@@ -77,6 +77,51 @@ def transactional(func):
     return wrapped
 
 
+def validate_tags_field(tags: Any) -> None:
+    """Raise MemoryUsageError for a malformed ``tags`` value, if provided.
+
+    ``None`` (field omitted) is valid and means "leave existing tags
+    untouched" -- see the 3-state upsert semantics in
+    ``markdown_store.upsert_from_observation()``/``update_metadata()``.
+    """
+    if tags is None:
+        return
+    try:
+        normalize_tags(tags)
+    except ValueError as exc:
+        raise MemoryUsageError(str(exc)) from exc
+
+
+def validate_related_field(related: Any) -> None:
+    """Raise MemoryUsageError for a malformed ``related`` value, if provided.
+
+    Validates shape and per-element id format directly (rather than
+    delegating to ``markdown_store.normalize_related()``) so that a bad
+    element's error message names both the ``related`` field and the
+    offending value -- ``validate_memory_id()``'s own message says only
+    "memory ID must identify an active memory", which doesn't tell the
+    caller which input field or value triggered it.
+
+    Self-reference filtering is intentionally not applied here: the final
+    memory id isn't known yet for a brand-new memory, so that happens later
+    in the store layer with the resolved id (see
+    ``markdown_store.normalize_related()``).
+    """
+    if related is None:
+        return
+    if not isinstance(related, list):
+        raise MemoryUsageError(f"related must be a list, got {related!r}")
+    for item in related:
+        if not isinstance(item, str) or not item.strip():
+            raise MemoryUsageError(
+                f"related element {item!r} is invalid: must be a non-empty string"
+            )
+        try:
+            validate_memory_id(item)
+        except StorePathError as exc:
+            raise MemoryUsageError(f"related element {item!r} is invalid: {exc}") from exc
+
+
 def validate_write_memory(args: argparse.Namespace) -> str | None:
     for field in ("key", "summary", "entity_type", "entity_id"):
         value = getattr(args, field)
@@ -86,6 +131,8 @@ def validate_write_memory(args: argparse.Namespace) -> str | None:
         raise MemoryUsageError("memory_type must be profile, feedback or reference")
     if args.scope not in ("global", "project"):
         raise MemoryUsageError("write scope must be global or project")
+    validate_tags_field(getattr(args, "tags", None))
+    validate_related_field(getattr(args, "related", None))
     if (
         isinstance(args.confidence, bool)
         or not isinstance(args.confidence, (int, float))
@@ -532,6 +579,8 @@ def upsert_memory_from_observation(
         scope=observation["scope"],
         project_id=project_id,
         summary=summary,
+        tags=value.get("tags"),
+        related=value.get("related"),
     )
     return record["id"]
 
@@ -598,6 +647,12 @@ def run_write_memory(args: argparse.Namespace) -> dict[str, Any]:
         "value": args.summary,
         "source": getattr(args, "source", "claude_code_extract"),
     }
+    tags = getattr(args, "tags", None)
+    related = getattr(args, "related", None)
+    if tags is not None:
+        value["tags"] = tags
+    if related is not None:
+        value["related"] = related
     observation = args.local_store.append_observation(
         session_id=args.session_id,
         source_event_id=event["id"],
@@ -611,9 +666,29 @@ def run_write_memory(args: argparse.Namespace) -> dict[str, Any]:
         extractor_version=getattr(args, "extractor_version", "claude-code-v1"),
     )
 
-    upsert_memory_from_observation(args.markdown_store, observation)
+    memory_id = upsert_memory_from_observation(args.markdown_store, observation)
 
-    return {"ok": True, "observation_id": observation["id"], "event_id": event["id"]}
+    # Existence of a `related` id is a warning, not a write-time error (see
+    # markdown_store.py's _warn_dangling_related()); that warning goes to
+    # stderr, which an MCP-connected LLM never sees, so it's surfaced here
+    # too. Only computed when this call actually touched `related` --
+    # re-reporting a pre-existing dangling reference on every unrelated
+    # write would be noise unconnected to what this call changed.
+    dangling_related: list[str] = []
+    if related is not None:
+        written_record = args.markdown_store.read(memory_id)
+        if written_record is not None:
+            active_ids = {r["id"] for r in args.markdown_store.iter_all()}
+            dangling_related = sorted(
+                rid for rid in written_record.get("related", []) if rid not in active_ids
+            )
+
+    return {
+        "ok": True,
+        "observation_id": observation["id"],
+        "event_id": event["id"],
+        "dangling_related": dangling_related,
+    }
 
 
 def cmd_write_memory(args: argparse.Namespace) -> None:
@@ -721,6 +796,8 @@ def serialize_memory(record: dict[str, Any]) -> dict[str, Any]:
         "project_id": record.get("project_id"),
         "entity_id": record.get("entity_id"),
         "updated": record["updated"],
+        "tags": record.get("tags") or [],
+        "related": record.get("related") or [],
     }
 
 
@@ -742,6 +819,7 @@ def serialize_history_memory(row: dict[str, Any], query: str | None) -> dict[str
         "entity_id": row.get("entity_id"),
         "updated": row["updated"],
         "history": row.get("history", []),
+        "tags": row.get("tags") or [],
         "excerpt": make_excerpt(combined_text, query),
     }
 
@@ -944,12 +1022,20 @@ def cmd_history(args: argparse.Namespace) -> None:
 
 
 def run_search(args: argparse.Namespace) -> dict[str, Any]:
+    tags = getattr(args, "tags", None)
+    if tags is not None:
+        try:
+            tags = normalize_tags(tags)
+        except ValueError as exc:
+            raise MemoryUsageError(str(exc)) from exc
+
     records = args.markdown_store.search(
         query=args.query,
         entity_id=args.entity_id,
         type=args.memory_type,
         scope=args.scope,
         project_id=args.project_id,
+        tags=tags,
     )
     ranked = sorted(records, key=lambda r: score_memory(r, args.query), reverse=True)[: args.limit]
 
@@ -967,6 +1053,91 @@ def cmd_search(args: argparse.Namespace) -> None:
     try:
         print_json(run_search(args))
     except (MemoryUsageError, StorePathError) as exc:
+        raise SystemExit(str(exc)) from exc
+
+
+def run_related(args: argparse.Namespace) -> dict[str, Any]:
+    limit = args.limit
+    # This is the CLI/MCP-shared entry point for `related`. MCP already
+    # enforces 1<=limit<=100 at the Pydantic Field layer before a call ever
+    # reaches here, but the CLI's argparse `type=int` only checks the type,
+    # not the range -- without this check a negative limit silently changes
+    # meaning (Python slicing treats it as "exclude from the end") instead
+    # of being rejected (see verification.md issue 3).
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+        raise MemoryUsageError(f"limit must be an integer between 1 and 100, got {limit!r}")
+    result = args.markdown_store.related(args.memory_id, limit=limit)
+    hits = [
+        {
+            **serialize_memory(hit),
+            "score": hit["score"],
+            "matched_tags": hit["matched_tags"],
+            "link": hit["link"],
+        }
+        for hit in result["hits"]
+    ]
+    return {"ok": True, "hits": hits, "dangling": result["dangling"], "count": len(hits)}
+
+
+def cmd_related(args: argparse.Namespace) -> None:
+    try:
+        print_json(run_related(args))
+    except (MemoryUsageError, StorePathError) as exc:
+        raise SystemExit(str(exc)) from exc
+
+
+def run_list_tags(args: argparse.Namespace) -> dict[str, Any]:
+    tags = args.markdown_store.list_tags()
+    return {"ok": True, "tags": tags, "count": len(tags)}
+
+
+def cmd_list_tags(args: argparse.Namespace) -> None:
+    try:
+        print_json(run_list_tags(args))
+    except (MemoryUsageError, StorePathError) as exc:
+        raise SystemExit(str(exc)) from exc
+
+
+def validate_update_metadata(args: argparse.Namespace) -> None:
+    memory_id = getattr(args, "memory_id", None)
+    if not isinstance(memory_id, str) or not memory_id.strip():
+        raise MemoryUsageError("memory_id must be a non-empty string")
+    tags = getattr(args, "tags", None)
+    related = getattr(args, "related", None)
+    if tags is None and related is None:
+        raise MemoryUsageError(
+            "update-metadata requires --tag/--clear-tags or --related/--clear-related"
+        )
+    validate_tags_field(tags)
+    validate_related_field(related)
+
+
+def run_update_metadata(args: argparse.Namespace) -> dict[str, Any]:
+    validate_update_metadata(args)
+    record = args.markdown_store.update_metadata(
+        args.memory_id,
+        tags=getattr(args, "tags", None),
+        related=getattr(args, "related", None),
+    )
+    # See run_write_memory()'s comment: a dangling `related` id is accepted
+    # with a stderr warning at the store layer, which isn't visible to an
+    # MCP-connected LLM, so it's surfaced here as well.
+    return {
+        "ok": True,
+        "memory": serialize_memory(record),
+        "dangling_related": record.get("dangling_related", []),
+    }
+
+
+def cmd_update_metadata(args: argparse.Namespace) -> None:
+    try:
+        print_json(run_update_metadata(args))
+    # MarkdownMemoryStore.update_metadata() raises a plain ValueError for its
+    # own "both omitted" / "memory not found" guards (see markdown_store.py --
+    # StorePathError would misrepresent these as a path-boundary violation),
+    # so this catches ValueError directly rather than the narrower
+    # (MemoryUsageError, StorePathError) tuple used by sibling cmd_* functions.
+    except (MemoryUsageError, StorePathError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc
 
 
@@ -1231,8 +1402,21 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--memory-type", choices=["profile", "feedback", "reference"])
     search.add_argument("--scope", choices=["global", "project", "client", "temporary"])
     search.add_argument("--project-id")
+    search.add_argument(
+        "--tag", action="append", dest="tags", help="Filter by tag (AND, repeatable)"
+    )
     search.add_argument("--limit", type=int, default=10)
     search.set_defaults(func=cmd_search)
+
+    related = subparsers.add_parser(
+        "related", help="Find memories related to a given memory by tags/links"
+    )
+    related.add_argument("--memory-id", required=True)
+    related.add_argument("--limit", type=int, default=10)
+    related.set_defaults(func=cmd_related)
+
+    list_tags = subparsers.add_parser("list-tags", help="List all tags currently in use")
+    list_tags.set_defaults(func=cmd_list_tags)
 
     history = subparsers.add_parser(
         "history", help="Search historical sessions, events, and memories"
@@ -1309,11 +1493,62 @@ def build_parser() -> argparse.ArgumentParser:
     write_memory.add_argument("--confidence", type=float, default=0.8)
     write_memory.add_argument("--scope", default="global", choices=["global", "project"])
     write_memory.add_argument("--project-id")
+    write_memory_tags = write_memory.add_mutually_exclusive_group()
+    write_memory_tags.add_argument(
+        "--tag", action="append", dest="tags", default=None, help="Add a tag (repeatable)"
+    )
+    write_memory_tags.add_argument(
+        "--clear-tags", action="store_const", dest="tags", const=[], help="Remove all tags"
+    )
+    write_memory_related = write_memory.add_mutually_exclusive_group()
+    write_memory_related.add_argument(
+        "--related",
+        action="append",
+        dest="related",
+        default=None,
+        help="Add a related memory id (repeatable)",
+    )
+    write_memory_related.add_argument(
+        "--clear-related",
+        action="store_const",
+        dest="related",
+        const=[],
+        help="Remove all related links",
+    )
     write_memory.set_defaults(func=cmd_write_memory)
 
     mark_extracted = subparsers.add_parser("mark-extracted", help="Mark a session as extracted")
     mark_extracted.add_argument("--session-id", required=True)
     mark_extracted.set_defaults(func=cmd_mark_extracted)
+
+    update_metadata = subparsers.add_parser(
+        "update-metadata",
+        help="Update only tags/related for an existing memory, without touching its body",
+    )
+    update_metadata.add_argument("--memory-id", required=True)
+    update_metadata_tags = update_metadata.add_mutually_exclusive_group()
+    update_metadata_tags.add_argument(
+        "--tag", action="append", dest="tags", default=None, help="Add a tag (repeatable)"
+    )
+    update_metadata_tags.add_argument(
+        "--clear-tags", action="store_const", dest="tags", const=[], help="Remove all tags"
+    )
+    update_metadata_related = update_metadata.add_mutually_exclusive_group()
+    update_metadata_related.add_argument(
+        "--related",
+        action="append",
+        dest="related",
+        default=None,
+        help="Add a related memory id (repeatable)",
+    )
+    update_metadata_related.add_argument(
+        "--clear-related",
+        action="store_const",
+        dest="related",
+        const=[],
+        help="Remove all related links",
+    )
+    update_metadata.set_defaults(func=cmd_update_metadata)
 
     return parser
 

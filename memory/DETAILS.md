@@ -9,8 +9,14 @@
 - 保存先: 明示設定の Vault 配下の `memory/`（設定方法は下記。設定なしの従来 CLI のみ `~/.agents/memory/vault/` へフォールバック）
 - Syncthing 同期対象。Obsidian 等のノートアプリで人間が直接閲覧・編集できることを意図している
 - 1論理キー（`entity_type` + `entity_id` + `key` + `scope` + `project_id`）= 1 Markdown ファイル
-- 新規保存の `created` / `updated` は秒・UTC オフセット付きのローカル日時（例: `2026-09-06T14:30:00+09:00`）。更新時は `created` を維持し、本文または type が変わった場合だけ `updated` を更新する。既存の日付のみの値は読み取り可能で、不明な過去の時刻は補完しない。本文の変更履歴は従来どおり日付単位。
-- frontmatter は `type`（`profile` / `feedback` / `reference` の3種）・`created`・`updated` のみの最小構成
+- 新規保存の `created` / `updated` は秒・UTC オフセット付きのローカル日時（例: `2026-09-06T14:30:00+09:00`）。更新時は `created` を維持し、本文または type が変わった場合だけ `updated` を更新する。既存の日付のみの値は読み取り可能で、不明な過去の時刻は補完しない。本文の変更履歴は従来どおり日付単位。タグ・関連のみの変更では `updated` を更新せず、変更履歴にも追記しない
+- frontmatter は `type`（`profile` / `feedback` / `reference` の3種）・`created`・`updated`・任意で `tags`・`related` の構成
+- `tags`（文字列リスト、小文字 kebab-case、Obsidian の階層タグ用に `/` を保持）と `related`（記憶 ID のリスト。`global/<slug>` 等ディレクトリ階層を含む形式）は空なら frontmatter にキー自体を出さない。両方とも `updated` の直後に、非空の場合だけ出力される
+- タグ・関連の**書き込み時の検証は厳格**（非リスト・非文字列・空文字・正規化後に空になるタグ・`validate_memory_id` を通らない related はエラー）、**Vault からの読み出しは寛容**（欠損・null は空リスト、文字列はカンマ分割、リスト内の不正要素は記憶 ID とフィールド名を添えて stderr に警告したうえで個別に除外し、他の要素・他の記憶には影響しない）。読み出しが元ファイルを書き換えることはない
+- タグの正規化は `slugify()` とは別の `normalize_tag()` が行う。既知の制限として `C++` と `C#` はどちらも `c` に正規化される。`cpp` / `csharp` の使用を推奨する
+- `related` は書き込み時に自己参照・重複を除去する。形式検証（`validate_memory_id` を通るか）はハードエラーだが、存在検証は警告のみで受理する（`forget` によるアーカイブで参照先が無くなる dangling 状態は正常）。存在しない ID を指定して保存すると、stderr に記憶 ID・フィールド名・対象 ID を含む警告が出るが値はそのまま受理される。stderr は MCP 経由の LLM からは見えないため、`write_memory`/`update_metadata`（CLI では `write-memory`/`update-metadata`）の戻り値にも `dangling_related`（今回の呼び出しで指定した related のうち存在しないもの。存在しない参照が無ければ空リスト）が含まれる。既存の参照先は `related` ツール呼び出し時にも読み出し時点の存在確認が行われ、結果本体から除外されたうえで別フィールド `dangling` へ分離される
+- `update_metadata` は本文をバイト単位で保持するが、frontmatter 全体の YAML 表記の再整形は許容範囲内（設計判断参照）。クォートなしの日時（例: `created: 2026-01-01T00:00:00+09:00`）を持つ手編集ファイルは PyYAML が `datetime` オブジェクトとして読み込むため、`update_metadata` 実行後に区切り文字が `T` から半角スペースに変わることがある（`created: 2026-01-01 00:00:00+09:00`）。値そのもの（日時の実体）は変わらず、通常の `write()` 経路（`upsert_from_observation` 等）は `created`/`updated` を常に文字列として扱うためこの再整形は起きない
+- `update_metadata` は frontmatter の区切り（開始・終端の `---` 行）を検出できないファイル（BOM 付き、frontmatter が無いプレーン Markdown、開始 `---` はあるが終端が無い切り詰められたファイルなど）を、新しい frontmatter を本文の手前に誤って挿入しないよう一切書き換えずにエラーで拒否する。BOM を透過的に受理する救済は行わない（読み出し側の `_parse_markdown` も同じ BOM を frontmatter なしとして扱うため、書き込み側だけ寛容にすると整合が崩れる）
 - 本文は人間可読な説明文＋任意で「## 変更履歴」セクション（値が変わった場合のみ、変更前の値と日付を追記する。新しいファイルは作らない）
 - ディレクトリ構成（`scope` ごとにグルーピング）:
   - `memory/` 直下には生成物の `memory/_index.md` **だけ**を置く。具体的な記憶ファイルは必ず分類ディレクトリ内に置く
@@ -63,12 +69,12 @@ Codex 側は `codex-memory-run.sh` 経由でセッション終了時に自動実
 
 | ファイル | 役割 |
 | --- | --- |
-| `mcp_server.py` | FastMCP の stdio サーバー。7 ツールを共通ロジックへ接続 |
+| `mcp_server.py` | FastMCP の stdio サーバー。10 ツールを共通ロジックへ接続 |
 | `check_mcp.py` | MCP SDK の stdio クライアントで `mcp_server.py` を実子プロセスとして起動し、initialize〜tools/call を実往復させるハンドシェイク試験。`test_mcp_server.py` の live round trip テストと `scripts/memory-mcp-check.sh`（延いては導入スクリプト・`make memory-mcp-check`）の両方から呼ばれる。実際に `write_memory` 等を実行するため、呼び出し側が Vault/local/queue/config を隔離する責任を負う |
 | `memory_config.py` | CLI/MCP 共通の厳格な設定・保存先解決 |
 | `store_lock.py` | CLI・両ストア・移行処理が共有するプロセス間ファイルロック（`$XDG_CACHE_HOME`/`%LOCALAPPDATA%` 配下の同期外ディレクトリにロックファイルを置く） |
 | `store_paths.py` | session ID・記憶 ID・保存領域内パスの検証（traversal・絶対パス・リンクの拒否） |
-| `memory.py` | CLI本体。サブコマンド: `init-db` / `start-session` / `append-event` / `end-session` / `extract` / `consolidate` / `search` / `history` / `get-context` / `forget` / `queue-session` / `flush-queue` / `cleanup` / `list-unextracted` / `write-memory` / `mark-extracted` |
+| `memory.py` | CLI本体。サブコマンド: `init-db` / `start-session` / `append-event` / `end-session` / `extract` / `consolidate` / `search` / `history` / `get-context` / `forget` / `queue-session` / `flush-queue` / `cleanup` / `list-unextracted` / `write-memory` / `mark-extracted` / `related` / `list-tags` / `update-metadata` |
 | `markdown_store.py` | `MarkdownMemoryStore`。Vault層の読み書き・upsert・forget・索引生成を担当 |
 | `local_store.py` | `LocalPipelineStore`。local層（sessions/events/observations/logs）の読み書きを担当 |
 | `migrate_sqlite_to_markdown.py` | 旧SQLiteからの一括移行スクリプト。dry-run が既定で `--apply` で実際に書き込む。冪等 |
@@ -90,12 +96,18 @@ MCP と全テストはロック済み uv 環境で実行します。MCP SDK と 
 ```bash
 memory/run-python.sh memory/memory.py search --query "エディタ"
 memory/run-python.sh memory/memory.py get-context --user-id default --project-id my-project
-memory/run-python.sh memory/memory.py write-memory --session-id <id> --memory-type profile --key preferred_editor --summary "好みのエディタ: Neovim" --scope global
+memory/run-python.sh memory/memory.py write-memory --session-id <id> --memory-type profile --key preferred_editor --summary "好みのエディタ: Neovim" --scope global --tag docker --tag gpu --related global/other-memory
+memory/run-python.sh memory/memory.py search --tag docker --tag gpu
+memory/run-python.sh memory/memory.py related --memory-id global/preferred-editor --limit 10
+memory/run-python.sh memory/memory.py list-tags
+memory/run-python.sh memory/memory.py update-metadata --memory-id global/preferred-editor --tag docker --clear-related
 memory/run-python.sh memory/memory.py forget --memory-id <id> --reason "古くなったため"
 memory/run-python.sh memory/memory.py migrate-layout
 ```
 
 `migrate-layout` は旧形式の `memory/<key>.md` を `memory/global/<key>.md` へ安全に移す一回限りの移行コマンドです。移動先に同名ファイルがある場合は上書きせずエラーにします。
+
+`write-memory` / `update-metadata` の `--tag` / `--related` は繰り返し指定でき、省略時は既存のタグ・関連を維持します。全消去は `--clear-tags` / `--clear-related` を使い、対応する値指定オプション（`--tag` / `--related`）とは同時指定できません。`update-metadata` は `--memory-id` のみを鍵に既存記憶のタグ・関連だけを書き換え、本文・タイトル・`type`・`created`・`updated` はそのまま保持します。`search` の複数 `--tag` は AND 絞り込みです。
 
 ## テスト
 

@@ -29,6 +29,9 @@ EXPECTED_TOOLS = {
     "forget",
     "list_unextracted",
     "mark_extracted",
+    "related",
+    "list_tags",
+    "update_metadata",
 }
 
 _SERVER_PATH = Path(__file__).resolve().with_name("mcp_server.py")
@@ -95,6 +98,64 @@ async def check() -> None:
             still_alive = await session.call_tool("search", {})
             if still_alive.isError:
                 raise SystemExit(f"server did not stay usable after a tool error: {still_alive}")
+
+            # Tags/related round trip: tagged write_memory -> search(tags=...)
+            # to recover the id -> update_metadata to replace, then clear ->
+            # list_tags. Also verifies update_metadata does not touch the
+            # memory's title/summary/updated (a pure metadata edit, see
+            # mcp_server.py's update_metadata docstring).
+            tagged = await session.call_tool(
+                "write_memory",
+                {
+                    "key": "check-tags",
+                    "summary": "Tag round-trip check",
+                    "memory_type": "reference",
+                    "tags": ["docker", "GPU"],
+                },
+            )
+            if tagged.isError:
+                raise SystemExit(f"write_memory with tags unexpectedly failed: {tagged}")
+
+            tag_search = await session.call_tool(
+                "search", {"query": "Tag round-trip", "tags": ["docker"]}
+            )
+            if tag_search.isError or tag_search.structuredContent is None:
+                raise SystemExit(f"search with tags unexpectedly failed: {tag_search}")
+            memories = tag_search.structuredContent.get("memories", [])
+            if not memories:
+                raise SystemExit(f"search(tags=...) did not find the tagged memory: {tag_search}")
+            before = memories[0]
+
+            updated = await session.call_tool(
+                "update_metadata",
+                {"memory_id": before["id"], "tags": ["docker", "gpu", "linux"]},
+            )
+            if updated.isError or updated.structuredContent is None:
+                raise SystemExit(f"update_metadata unexpectedly failed: {updated}")
+            after = updated.structuredContent["memory"]
+            for field in ("id", "type", "title", "summary", "updated"):
+                if before[field] != after[field]:
+                    raise SystemExit(
+                        f"update_metadata must not change {field}: before={before} after={after}"
+                    )
+            if sorted(after["tags"]) != ["docker", "gpu", "linux"]:
+                raise SystemExit(f"update_metadata did not replace tags as expected: {updated}")
+
+            cleared = await session.call_tool(
+                "update_metadata", {"memory_id": before["id"], "tags": []}
+            )
+            if cleared.isError or cleared.structuredContent is None:
+                raise SystemExit(f"update_metadata clearing tags unexpectedly failed: {cleared}")
+            if cleared.structuredContent["memory"]["tags"] != []:
+                raise SystemExit(f"update_metadata did not clear tags: {cleared}")
+
+            related = await session.call_tool("related", {"memory_id": before["id"]})
+            if related.isError:
+                raise SystemExit(f"related unexpectedly failed: {related}")
+
+            tags_listing = await session.call_tool("list_tags", {})
+            if tags_listing.isError:
+                raise SystemExit(f"list_tags unexpectedly failed: {tags_listing}")
 
 
 if __name__ == "__main__":

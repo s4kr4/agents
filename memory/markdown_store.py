@@ -67,7 +67,7 @@ import os
 import re
 import sys
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -87,6 +87,17 @@ _SLUG_INVALID_CHARS = re.compile(r"[^\w]+", re.UNICODE)
 _SLUG_MULTI_DASH = re.compile(r"-+")
 _KEY_WORD_SPLIT = re.compile(r"[_\-\s]+")
 
+_TAG_WHITESPACE = re.compile(r"\s+")
+_TAG_INVALID_CHARS = re.compile(r"[^\w/]+", re.UNICODE)
+_TAG_MULTI_DASH = re.compile(r"-+")
+
+# Canonical frontmatter key order: known fields first (matching write()'s
+# layout), then any unrecognized keys in their original relative order. Used
+# by update_metadata() to keep a stable, predictable diff when tags/related
+# are added to a file that didn't have them yet (see the module's tags/
+# related design notes).
+_FRONTMATTER_CORE_ORDER = ("type", "created", "updated", "tags", "related")
+
 
 def current_timestamp() -> str:
     """Return local ISO-8601 date/time with seconds and an explicit UTC offset."""
@@ -99,6 +110,134 @@ def slugify(text: str) -> str:
     normalized = _SLUG_INVALID_CHARS.sub("-", normalized)
     normalized = _SLUG_MULTI_DASH.sub("-", normalized).strip("-")
     return normalized or "untitled"
+
+
+def normalize_tag(value: str) -> str:
+    """Normalize a single tag for writing: lowercase kebab-case.
+
+    Unlike ``slugify()``, this preserves ``/`` (Obsidian's hierarchical-tag
+    separator, e.g. ``env/wsl``) and raises instead of falling back to a
+    placeholder when the result would be empty -- a silently generated
+    meaningless tag is worse than a rejected one. Unicode word characters
+    (including Japanese) are preserved. Known limitation: ``C++`` and ``C#``
+    both normalize to ``c``; use ``cpp``/``csharp`` instead.
+    """
+    if not isinstance(value, str):
+        raise ValueError(f"tag must be a string, got {value!r}")
+    normalized = value.strip().lower().replace("_", "-")
+    normalized = _TAG_WHITESPACE.sub("-", normalized)
+    normalized = _TAG_INVALID_CHARS.sub("-", normalized)
+    normalized = _TAG_MULTI_DASH.sub("-", normalized).strip("-")
+    if not normalized:
+        raise ValueError(f"tag normalizes to an empty string: {value!r}")
+    return normalized
+
+
+def normalize_tags(tags: Any) -> list[str]:
+    """Validate and normalize a list of tags for writing (strict boundary).
+
+    ``tags`` must be a list; each element must be a string that normalizes
+    to a non-empty tag via ``normalize_tag()``. Duplicates (after
+    normalization) are removed and the result is sorted so that repeated
+    writes of the same tag set produce byte-identical frontmatter (helps
+    Syncthing converge instead of flagging spurious conflicts).
+    """
+    if not isinstance(tags, list):
+        raise ValueError(f"tags must be a list, got {tags!r}")
+    return sorted({normalize_tag(tag) for tag in tags})
+
+
+def normalize_related(related: Any, self_id: str | None = None) -> list[str]:
+    """Validate and normalize a list of related memory ids for writing.
+
+    ``related`` must be a list of memory-id-shaped strings, checked via
+    ``validate_memory_id()`` (format only -- existence of the referenced
+    memory is a read-time concern, see ``MarkdownMemoryStore.related()``,
+    not a write-time one, since ``forget()`` legitimately produces dangling
+    references). ``self_id`` (the record's own id, if known yet) and
+    duplicates are silently removed; the result is sorted for the same
+    determinism reason as ``normalize_tags()``.
+    """
+    if not isinstance(related, list):
+        raise ValueError(f"related must be a list, got {related!r}")
+    normalized: set[str] = set()
+    for item in related:
+        if not isinstance(item, str):
+            raise ValueError(f"related id must be a string, got {item!r}")
+        validate_memory_id(item)
+        if item == self_id:
+            continue
+        normalized.add(item)
+    return sorted(normalized)
+
+
+def _lenient_tags(raw: Any, memory_id: str) -> list[str]:
+    """Read frontmatter ``tags`` tolerantly: warn and drop what's malformed
+    instead of failing the whole read (see the module's tags/related design
+    notes -- lenient reads are a deliberately different boundary from the
+    strict ``normalize_tags()`` used when writing).
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        items: list[Any] = raw.split(",")
+    elif isinstance(raw, list):
+        items = raw
+    else:
+        print(
+            f"warning: {memory_id}: ignoring invalid 'tags' value (expected a list): {raw!r}",
+            file=sys.stderr,
+        )
+        return []
+
+    normalized: set[str] = set()
+    for item in items:
+        if not isinstance(item, str):
+            print(f"warning: {memory_id}: ignoring invalid tag element: {item!r}", file=sys.stderr)
+            continue
+        try:
+            normalized.add(normalize_tag(item))
+        except ValueError:
+            print(f"warning: {memory_id}: ignoring invalid tag element: {item!r}", file=sys.stderr)
+    return sorted(normalized)
+
+
+def _lenient_related(raw: Any, memory_id: str) -> list[str]:
+    """Read frontmatter ``related`` tolerantly (see ``_lenient_tags()``).
+
+    A well-formed id that doesn't currently resolve to a file is kept here
+    (dangling references are a normal, expected state -- see
+    ``MarkdownMemoryStore.related()``); only malformed elements are dropped.
+    """
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        print(
+            f"warning: {memory_id}: ignoring invalid 'related' value (expected a list): {raw!r}",
+            file=sys.stderr,
+        )
+        return []
+
+    normalized: set[str] = set()
+    for item in raw:
+        if not isinstance(item, str):
+            print(
+                f"warning: {memory_id}: ignoring invalid related element: {item!r}",
+                file=sys.stderr,
+            )
+            continue
+        try:
+            validate_memory_id(item)
+        except StorePathError:
+            print(
+                f"warning: {memory_id}: ignoring invalid related element: {item!r}",
+                file=sys.stderr,
+            )
+            continue
+        if item == memory_id:
+            continue
+        normalized.add(item)
+    return sorted(normalized)
 
 
 def humanize_key(key: str) -> str:
@@ -176,6 +315,41 @@ def format_history_date(iso_timestamp: str) -> str:
     return iso_timestamp[:10]
 
 
+def _updated_sort_key(record: dict[str, Any]) -> datetime:
+    """Return a UTC-normalized ``datetime`` for sorting records by ``updated``.
+
+    Comparing ``updated`` as a raw string (as ``search()``/``get_context()``/
+    ``_write_index()`` still do -- out of scope for this fix, see
+    verification.md) breaks whenever two records use different UTC offsets
+    for the same instant, since lexicographic order does not track offset
+    (e.g. ``"...T10:00:00+09:00"`` sorts as "newer" than
+    ``"...T02:00:00+00:00"`` even though the latter is a later instant).
+    This is used by ``related()`` and is written as a reusable, named
+    helper (rather than inlined) so the same fix can be applied to the
+    other three call sites later without re-deriving it.
+
+    A missing or unparseable value sorts as the oldest possible instant --
+    deterministic, and pushes it to the end of a descending sort without
+    raising (``sort()`` would otherwise raise ``TypeError`` comparing
+    ``None``/an unparseable string against a real ``datetime``).
+    """
+    oldest = datetime.min.replace(tzinfo=timezone.utc)
+    value = record.get("updated")
+    if not value:
+        return oldest
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except ValueError:
+        return oldest
+    # Legacy frontmatter stores bare dates (e.g. "2026-05-06"), which
+    # fromisoformat() parses as a naive datetime at midnight; treat that as
+    # UTC rather than guessing at an unknown original offset (matches
+    # memory.py's parse_timestamp()).
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def _first_line(text: str) -> str:
     """Return the first non-blank line of ``text``, stripped (for compact history lines)."""
     stripped = text.strip()
@@ -215,6 +389,72 @@ def _parse_markdown(text: str) -> tuple[dict[str, Any], str]:
     body = "\n".join(lines[end_index + 1 :])
     frontmatter = yaml.safe_load(frontmatter_text) or {}
     return frontmatter, body.lstrip("\n").rstrip("\n")
+
+
+_LINE_ENDING = re.compile(r"\r\n|\r|\n")
+
+
+def _split_frontmatter_and_raw_body(text: str) -> tuple[dict[str, Any], str] | None:
+    """Like ``_parse_markdown()``, but the body is returned exactly as it
+    appears in ``text`` -- no leading/trailing blank-line normalization, and
+    no line-ending normalization (CRLF/CR survive untouched).
+
+    Returns ``None`` if no frontmatter block (an opening ``"---"`` line and a
+    matching closing ``"---"`` line) can be found -- e.g. a BOM before the
+    opening delimiter (``"\\ufeff---"`` does not start with ``"---"``), a
+    plain Markdown file with no frontmatter at all, or a truncated file with
+    an opening delimiter but no closing one. Unlike ``_parse_markdown()``
+    (whose callers treat "no frontmatter" as a legitimate, if unusual, state
+    for a freshly-read file), a caller here is always about to *edit* an
+    existing memory's frontmatter -- so a failed detection must be
+    distinguishable from "frontmatter is legitimately empty" (which doesn't
+    happen in practice; ``write()`` always emits ``type``/``created``/
+    ``updated``) so ``update_metadata()`` can refuse instead of silently
+    starting a new frontmatter block ahead of what would then be
+    misinterpreted as body text (see its call site).
+
+    ``update_metadata()`` uses this instead of ``_parse_markdown()`` because
+    it must reproduce the body byte-for-byte (see the module's tags/related
+    design notes and ``update_metadata()``'s docstring). Two things
+    ``_parse_markdown()`` does that would break that guarantee:
+
+    - It strips leading/trailing blank lines for the read path's own record
+      shape (title/summary/history parsing).
+    - Splitting on a bare ``"\\n"`` (as ``_parse_markdown()`` does) turns a
+      CRLF-terminated closing delimiter line into ``"---\\r"``, which never
+      equals ``"---"`` -- so a CRLF file's frontmatter boundary would go
+      undetected entirely. Scanning with ``_LINE_ENDING`` (CRLF/CR/LF) finds
+      the boundary correctly regardless of the file's line-ending style,
+      and slicing (rather than split-then-rejoin) leaves every original
+      character after that boundary -- including any CRLF in the body --
+      untouched. ``update_metadata()`` also must not rely on ``Path.read_text()``
+      to obtain ``text`` here, since its universal-newlines translation
+      would already have turned "\\r\\n" into "\\n" before this function
+      ever sees it (see ``update_metadata()``'s use of ``read_bytes()``).
+    """
+    if not text.startswith("---"):
+        return None
+
+    newline_matches = list(_LINE_ENDING.finditer(text))
+    if not newline_matches:
+        return None
+
+    line_start = 0
+    frontmatter_lines: list[str] = []
+    for line_index, match in enumerate(newline_matches):
+        line = text[line_start : match.start()]
+        line_start = match.end()
+        if line_index == 0:
+            # The opening "---" line itself; not part of the frontmatter body.
+            continue
+        if line == "---":
+            frontmatter_text = "\n".join(frontmatter_lines)
+            raw_body = text[line_start:]
+            frontmatter = yaml.safe_load(frontmatter_text) or {}
+            return frontmatter, raw_body
+        frontmatter_lines.append(line)
+
+    return None
 
 
 def _render_markdown(frontmatter: dict[str, Any], body: str) -> str:
@@ -322,6 +562,33 @@ class MarkdownMemoryStore:
             and not self._is_archived(path)
         }
 
+    def _warn_dangling_related(self, memory_id: str, related_ids: list[str]) -> list[str]:
+        """Return the subset of ``related_ids`` that aren't currently an active
+        memory, warning about each on stderr.
+
+        Called from ``upsert_from_observation()``/``update_metadata()`` right
+        after a caller-supplied ``related`` list is normalized. Existence is
+        accepted with a warning here, never rejected (see plan.md design
+        decision 2): ``forget()`` legitimately produces dangling references
+        during normal operation, and ``related()`` already reports them
+        separately via its own ``dangling`` field at read time. The warning
+        at write time exists because stderr (and thus that read-time signal)
+        isn't visible to an MCP-connected LLM -- callers surface this
+        return value as ``dangling_related`` in their response instead (see
+        ``memory.py``'s ``run_write_memory()``/``run_update_metadata()``).
+        """
+        if not related_ids:
+            return []
+        active_ids = self._existing_ids()
+        dangling = [related_id for related_id in related_ids if related_id not in active_ids]
+        for related_id in dangling:
+            print(
+                f"warning: {memory_id}: related id does not currently exist "
+                f"(accepted as a dangling reference): {related_id}",
+                file=sys.stderr,
+            )
+        return dangling
+
     def _resolve_free_slug(self, candidate: str) -> str:
         """Return ``candidate``, or ``candidate-2``/``candidate-3``/... if taken.
 
@@ -343,16 +610,32 @@ class MarkdownMemoryStore:
         tmp_path.write_text(text, encoding="utf-8")
         os.replace(tmp_path, path)
 
+    @staticmethod
+    def _write_bytes_atomic(path: Path, data: bytes) -> None:
+        """Like ``_write_text_atomic()``, but bypasses text-mode newline
+        translation entirely -- used by ``update_metadata()`` so a body's
+        original line endings (including CRLF) are never at the mercy of a
+        platform-dependent no-op (see its call site's comment)."""
+        tmp_path = path.with_name(f"{path.stem}.tmp-{uuid.uuid4().hex}{path.suffix}")
+        tmp_path.write_bytes(data)
+        os.replace(tmp_path, path)
+
     @locked
     def write(self, record: dict[str, Any]) -> Path:
         """Atomically write a memory record to its canonical file, then refresh the index."""
         self._assert_writable()
         path = self._path_for_id(record["id"])
-        frontmatter = {
+        frontmatter: dict[str, Any] = {
             "type": record["type"],
             "created": record["created"],
             "updated": record["updated"],
         }
+        tags = record.get("tags") or []
+        related = record.get("related") or []
+        if tags:
+            frontmatter["tags"] = tags
+        if related:
+            frontmatter["related"] = related
         body_lines = [f"# {record['title']}", "", record.get("summary", "")]
         history = record.get("history") or []
         if history:
@@ -396,6 +679,8 @@ class MarkdownMemoryStore:
             "scope": scope,
             "project_id": project_id,
             "entity_id": entity_id,
+            "tags": _lenient_tags(frontmatter.get("tags"), memory_id),
+            "related": _lenient_related(frontmatter.get("related"), memory_id),
         }
 
     @locked
@@ -483,6 +768,8 @@ class MarkdownMemoryStore:
         scope: str,
         project_id: str | None,
         summary: str,
+        tags: list[str] | None = None,
+        related: list[str] | None = None,
     ) -> dict[str, Any]:
         self._assert_writable()
         if scope == "project" and not project_id:
@@ -495,10 +782,18 @@ class MarkdownMemoryStore:
         timestamp = current_timestamp()
 
         if existing is not None:
+            if tags is not None:
+                existing["tags"] = normalize_tags(tags)
+            if related is not None:
+                existing["related"] = normalize_related(related, self_id=existing["id"])
+                self._warn_dangling_related(existing["id"], existing["related"])
+
             if existing["summary"] == summary:
                 # Nothing actually changed unless the type was recategorized;
                 # bumping `updated` here regardless would misleadingly imply
-                # the memory's content was refreshed.
+                # the memory's content was refreshed. Tags/related changes
+                # alone never bump `updated` either (see the module's
+                # tags/related design notes).
                 if existing.get("type") != type:
                     existing["updated"] = timestamp
                 existing["type"] = type
@@ -523,6 +818,11 @@ class MarkdownMemoryStore:
             canonical_memory_id(entity_type, entity_id, key, scope, project_id)
         )
         scope_derived, project_id_derived, entity_id_derived = _scope_info_from_id(candidate_slug)
+        final_related = (
+            normalize_related(related, self_id=candidate_slug) if related is not None else []
+        )
+        if related is not None:
+            self._warn_dangling_related(candidate_slug, final_related)
         record: dict[str, Any] = {
             "id": candidate_slug,
             "type": type,
@@ -534,6 +834,8 @@ class MarkdownMemoryStore:
             "scope": scope_derived,
             "project_id": project_id_derived,
             "entity_id": entity_id_derived,
+            "tags": normalize_tags(tags) if tags is not None else [],
+            "related": final_related,
         }
         self.write(record)
         return record
@@ -611,6 +913,7 @@ class MarkdownMemoryStore:
         type: str | None = None,
         scope: str | None = None,
         project_id: str | None = None,
+        tags: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         results = self.iter_all()
 
@@ -622,6 +925,14 @@ class MarkdownMemoryStore:
             results = [r for r in results if r["scope"] == scope]
         if project_id:
             results = [r for r in results if r.get("project_id") in (project_id, None)]
+        if tags:
+            # AND filter: a memory must carry every requested tag (see the
+            # module's tags/related design notes -- OR-style "broadly
+            # similar" retrieval is `related()`'s job, not search()'s).
+            # Callers are expected to normalize tags before calling (see
+            # memory.py's run_search()); this compares stored tags as-is.
+            required = set(tags)
+            results = [r for r in results if required <= set(r.get("tags", []))]
         if query:
             lowered = query.lower()
             results = [
@@ -632,6 +943,186 @@ class MarkdownMemoryStore:
 
         results.sort(key=lambda r: r["updated"], reverse=True)
         return results
+
+    @locked
+    def related(self, memory_id: str, limit: int = 10) -> dict[str, Any]:
+        """Rank other memories related to ``memory_id`` by explicit links and shared tags.
+
+        Score: 3.0 per explicit link (counted per direction, so a mutual
+        link scores 6.0) + 1.0 per shared tag. Memories that score 0 are
+        omitted. Ties break by ``updated`` descending, then ``id`` ascending
+        for determinism. Ids listed in ``memory_id``'s own ``related`` that
+        no longer resolve to a file are reported separately as ``dangling``
+        rather than silently dropped -- `forget()` legitimately produces
+        these, and hiding them would make cleanup harder to reason about.
+        """
+        if limit < 1:
+            raise ValueError(f"limit must be a positive integer, got {limit!r}")
+        record = self.read(memory_id)
+        if record is None:
+            raise StorePathError(f"memory not found: {memory_id}")
+
+        records = self.iter_all()
+        by_id = {r["id"]: r for r in records}
+        self_tags = set(record.get("tags", []))
+        self_related = set(record.get("related", []))
+
+        hits: list[dict[str, Any]] = []
+        for other_id, other in by_id.items():
+            if other_id == memory_id:
+                continue
+            is_outgoing = other_id in self_related
+            is_incoming = memory_id in other.get("related", [])
+            shared_tags = sorted(self_tags & set(other.get("tags", [])))
+
+            score = (3.0 if is_outgoing else 0.0) + (3.0 if is_incoming else 0.0)
+            score += 1.0 * len(shared_tags)
+            if score <= 0:
+                continue
+
+            if is_outgoing and is_incoming:
+                link = "mutual"
+            elif is_outgoing:
+                link = "outgoing"
+            elif is_incoming:
+                link = "incoming"
+            else:
+                link = "none"
+
+            hits.append({**other, "score": score, "matched_tags": shared_tags, "link": link})
+
+        # Stable multi-key sort: apply least-significant key first. `updated`
+        # is compared as a UTC-normalized instant (_updated_sort_key()), not
+        # as a raw string -- see its docstring for why (verification.md
+        # issue 2: a naive string compare puts records from different UTC
+        # offsets in the wrong order).
+        hits.sort(key=lambda h: h["id"])
+        hits.sort(key=_updated_sort_key, reverse=True)
+        hits.sort(key=lambda h: h["score"], reverse=True)
+
+        dangling = sorted(rel_id for rel_id in self_related if rel_id not in by_id)
+        return {"hits": hits[:limit], "dangling": dangling}
+
+    @locked
+    def list_tags(self) -> list[dict[str, Any]]:
+        """Return ``{tag, count}`` for every tag in use, ranked by count
+        descending then tag name ascending (ties)."""
+        counts: dict[str, int] = {}
+        for record in self.iter_all():
+            for tag in record.get("tags", []):
+                counts[tag] = counts.get(tag, 0) + 1
+        return [
+            {"tag": tag, "count": count}
+            for tag, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+        ]
+
+    @locked
+    def update_metadata(
+        self,
+        memory_id: str,
+        *,
+        tags: list[str] | None = None,
+        related: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Replace only ``tags``/``related`` in an existing memory's frontmatter.
+
+        Unlike ``write()``, this never reconstructs the body from
+        title/summary/history: it re-parses the file's own current text and
+        only swaps the requested frontmatter field(s), so the body (title,
+        change history, trailing newline) and any untouched frontmatter
+        value (including ``type``/``created``/``updated``, unknown keys, and
+        an unrequested field's value even if it is itself malformed) survive
+        byte-for-byte (only the YAML layout of the touched keys may be
+        re-rendered). No observation/session/event is created and
+        ``summarize_memory()`` is never invoked -- this is a pure metadata
+        edit, not a content change (see the module's tags/related design
+        notes for the full rationale).
+        """
+        if tags is None and related is None:
+            raise ValueError("update_metadata requires tags or related to be provided")
+        self._assert_writable()
+        path = self._path_for_id(memory_id)
+        if not path.exists():
+            raise ValueError(f"memory not found: {memory_id}")
+
+        # read_bytes() + manual decode, not Path.read_text(): text-mode reads
+        # apply universal-newlines translation ("\r\n"/"\r" -> "\n") before
+        # any string processing ever runs, which would silently turn a
+        # CRLF-edited body into LF and violate the byte-for-byte guarantee
+        # above (see _split_frontmatter_and_raw_body()'s docstring).
+        original_bytes = path.read_bytes()
+        original_text = original_bytes.decode("utf-8")
+        split = _split_frontmatter_and_raw_body(original_text)
+        if split is None:
+            # Never fabricate a fresh frontmatter block ahead of what would
+            # then be misread as body text (e.g. a BOM before the opening
+            # delimiter, no frontmatter at all, or a truncated file with no
+            # closing delimiter) -- see _split_frontmatter_and_raw_body()'s
+            # docstring. Refuse instead of silently corrupting the file.
+            raise ValueError(
+                f"cannot update metadata for {memory_id}: no frontmatter block detected "
+                "(possible BOM or missing/unterminated '---' delimiter)"
+            )
+        frontmatter, raw_body = split
+
+        new_frontmatter = dict(frontmatter)
+        dangling_related: list[str] = []
+        if tags is not None:
+            normalized_tags = normalize_tags(tags)
+            if normalized_tags:
+                new_frontmatter["tags"] = normalized_tags
+            else:
+                new_frontmatter.pop("tags", None)
+        if related is not None:
+            normalized_related = normalize_related(related, self_id=memory_id)
+            dangling_related = self._warn_dangling_related(memory_id, normalized_related)
+            if normalized_related:
+                new_frontmatter["related"] = normalized_related
+            else:
+                new_frontmatter.pop("related", None)
+
+        ordered_frontmatter = {
+            key: new_frontmatter[key] for key in _FRONTMATTER_CORE_ORDER if key in new_frontmatter
+        }
+        for key, value in new_frontmatter.items():
+            if key not in _FRONTMATTER_CORE_ORDER:
+                ordered_frontmatter[key] = value
+
+        # Deliberately not _render_markdown(): that helper always inserts a
+        # blank line + trailing newline meant for the store's own normalized
+        # body shape (see write()). Re-rendering only the frontmatter and
+        # reusing the body's exact raw text (from
+        # _split_frontmatter_and_raw_body()) is what keeps a hand-edited
+        # body's whitespace -- including multiple trailing blank lines --
+        # byte-for-byte (see the module's tags/related design notes).
+        yaml_text = yaml.safe_dump(
+            ordered_frontmatter,
+            allow_unicode=True,
+            default_flow_style=False,
+            sort_keys=False,
+            width=1_000_000,
+        )
+        new_text = f"---\n{yaml_text}---\n{raw_body}"
+        # Encode and compare/write as bytes, not str: on this store's own
+        # target platforms text-mode writes only translate bare "\n" (a
+        # no-op on POSIX, since os.linesep == "\n"), but relying on that
+        # platform-specific no-op would be fragile -- writing bytes directly
+        # is what actually guarantees the body's original line endings
+        # (including CRLF) survive regardless of platform.
+        new_bytes = new_text.encode("utf-8")
+        if new_bytes != original_bytes:
+            self._write_bytes_atomic(path, new_bytes)
+            self._write_index()
+
+        result = self._read_path(path)
+        # An ephemeral, non-persisted field reporting this call's own
+        # existence check (see _warn_dangling_related()) -- empty when
+        # `related` wasn't part of this call, not a summary of the file's
+        # full related list. memory.py's run_update_metadata() surfaces
+        # this as a top-level `dangling_related` in its JSON response,
+        # since stderr isn't visible to an MCP-connected LLM.
+        result["dangling_related"] = dangling_related
+        return result
 
     @locked
     def get_context(self, *, project_id: str | None) -> list[dict[str, Any]]:
@@ -714,5 +1205,16 @@ class MarkdownMemoryStore:
         lines = []
         for record in records:
             excerpt = record["summary"].splitlines()[0].strip() if record.get("summary") else ""
-            lines.append(f"- [{record['title']}]({record['id']}.md) — {excerpt}")
+            line = f"- [{record['title']}]({record['id']}.md) — {excerpt}"
+            tags = record.get("tags") or []
+            if tags:
+                # Inline code, not `#tag`: `_index.md` is a generated listing
+                # of every memory, so a literal `#tag` here would double-count
+                # every tag in Obsidian's tag pane and make `_index.md` itself
+                # show up in every tag search (see the module's tags/related
+                # design notes). `related` is deliberately not shown here --
+                # link browsing is Obsidian's property view / the `related`
+                # tool's job, not the index's.
+                line += f" `tags: {', '.join(tags)}`"
+            lines.append(line)
         return lines

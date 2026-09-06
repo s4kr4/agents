@@ -20,10 +20,14 @@ from markdown_store import (
     current_timestamp,
     format_history_date,
     humanize_key,
+    normalize_related,
+    normalize_tag,
+    normalize_tags,
     render_history_line,
     resolve_vault_dir,
     slugify,
 )
+from store_paths import StorePathError
 
 
 def _non_index_files(memory_dir: Path) -> list[Path]:
@@ -911,6 +915,891 @@ class TestMarkdownMemoryStoreIndex(MarkdownMemoryStoreTestBase):
         ids = [r["id"] for r in records]
         self.assertNotIn("_index", ids)
         self.assertEqual(len(records), 1)
+
+
+class TestNormalizeTag(unittest.TestCase):
+    """normalize_tag() lowercases, kebab-cases, and preserves Unicode/hierarchy."""
+
+    def test_lowercases_and_trims_whitespace(self):
+        self.assertEqual(normalize_tag("  Docker  "), "docker")
+
+    def test_converts_underscore_and_whitespace_to_dash(self):
+        self.assertEqual(normalize_tag("my tag_name"), "my-tag-name")
+
+    def test_collapses_invalid_characters_to_single_dash(self):
+        self.assertEqual(normalize_tag("foo!!!bar"), "foo-bar")
+
+    def test_collapses_consecutive_dashes(self):
+        self.assertEqual(normalize_tag("foo---bar"), "foo-bar")
+
+    def test_strips_leading_and_trailing_dashes(self):
+        self.assertEqual(normalize_tag("-foo-"), "foo")
+
+    def test_preserves_japanese_characters(self):
+        self.assertEqual(normalize_tag("日本語"), "日本語")
+
+    def test_preserves_obsidian_hierarchical_slash(self):
+        self.assertEqual(normalize_tag("env/wsl"), "env/wsl")
+
+    def test_raises_for_non_string_input(self):
+        with self.assertRaises(ValueError):
+            normalize_tag(123)  # type: ignore[arg-type]
+
+    def test_raises_for_empty_string(self):
+        with self.assertRaises(ValueError):
+            normalize_tag("")
+
+    def test_raises_when_normalized_result_is_empty(self):
+        with self.assertRaises(ValueError):
+            normalize_tag("!!!")
+
+    def test_cpp_and_csharp_both_normalize_to_c_known_limitation(self):
+        self.assertEqual(normalize_tag("C++"), normalize_tag("C#"))
+
+
+class TestNormalizeTags(unittest.TestCase):
+    """normalize_tags() validates a list, normalizes, dedupes and sorts."""
+
+    def test_normalizes_each_element(self):
+        self.assertEqual(normalize_tags(["Docker", "GPU"]), ["docker", "gpu"])
+
+    def test_deduplicates_after_normalization(self):
+        self.assertEqual(normalize_tags(["docker", "Docker", "DOCKER"]), ["docker"])
+
+    def test_sorts_result_deterministically(self):
+        self.assertEqual(normalize_tags(["gpu", "docker", "linux"]), ["docker", "gpu", "linux"])
+
+    def test_empty_list_is_valid_and_returns_empty_list(self):
+        self.assertEqual(normalize_tags([]), [])
+
+    def test_raises_for_non_list_input(self):
+        with self.assertRaises(ValueError):
+            normalize_tags("docker")
+
+    def test_raises_for_non_string_element(self):
+        with self.assertRaises(ValueError):
+            normalize_tags(["docker", 123])
+
+    def test_raises_for_empty_string_element(self):
+        with self.assertRaises(ValueError):
+            normalize_tags(["docker", ""])
+
+    def test_raises_for_element_that_normalizes_to_empty(self):
+        with self.assertRaises(ValueError):
+            normalize_tags(["docker", "!!!"])
+
+
+class TestNormalizeRelated(unittest.TestCase):
+    """normalize_related() validates id shape, removes self-refs/dupes, sorts."""
+
+    def test_validates_and_returns_sorted_ids(self):
+        self.assertEqual(
+            normalize_related(["global/b", "global/a"]),
+            ["global/a", "global/b"],
+        )
+
+    def test_deduplicates_ids(self):
+        self.assertEqual(normalize_related(["global/a", "global/a"]), ["global/a"])
+
+    def test_removes_self_reference(self):
+        self.assertEqual(
+            normalize_related(["global/a", "global/self"], self_id="global/self"),
+            ["global/a"],
+        )
+
+    def test_empty_list_is_valid(self):
+        self.assertEqual(normalize_related([]), [])
+
+    def test_raises_for_non_list_input(self):
+        with self.assertRaises(ValueError):
+            normalize_related("global/a")
+
+    def test_raises_for_non_string_element(self):
+        with self.assertRaises(ValueError):
+            normalize_related([123])
+
+    def test_raises_for_bare_slug_without_directory(self):
+        with self.assertRaises(StorePathError):
+            normalize_related(["bare-slug"])
+
+    def test_raises_for_index_id(self):
+        with self.assertRaises(StorePathError):
+            normalize_related(["global/_index"])
+
+    def test_does_not_check_existence(self):
+        # Existence is a read-time concern (see related()), not a write-time one.
+        self.assertEqual(normalize_related(["global/does-not-exist"]), ["global/does-not-exist"])
+
+
+class TestMarkdownMemoryStoreTagsRelatedRoundTrip(MarkdownMemoryStoreTestBase):
+    """tags/related survive a write/read round trip via upsert_from_observation()."""
+
+    def test_tags_round_trip(self):
+        created = self._upsert(tags=["Docker", "gpu"])
+        fetched = self.store.read(created["id"])
+        self.assertEqual(fetched["tags"], ["docker", "gpu"])
+
+    def test_japanese_tag_round_trip_is_not_corrupted(self):
+        created = self._upsert(tags=["日本語"])
+        fetched = self.store.read(created["id"])
+        self.assertEqual(fetched["tags"], ["日本語"])
+        path = self.store._path_for_id(created["id"])
+        self.assertIn("日本語", path.read_text(encoding="utf-8"))
+
+    def test_related_round_trip(self):
+        other = self._upsert(key="other_key", summary="other")
+        created = self._upsert(related=[other["id"]])
+        fetched = self.store.read(created["id"])
+        self.assertEqual(fetched["related"], [other["id"]])
+
+    def test_no_tags_key_defaults_to_empty_list(self):
+        created = self._upsert()
+        self.assertEqual(created["tags"], [])
+        self.assertEqual(created["related"], [])
+
+    def test_empty_tags_omits_frontmatter_key(self):
+        created = self._upsert(tags=[])
+        path = self.store._path_for_id(created["id"])
+        text = path.read_text(encoding="utf-8")
+        frontmatter_text = text.split("---\n")[1]
+        self.assertNotIn("tags:", frontmatter_text)
+
+    def test_empty_related_omits_frontmatter_key(self):
+        created = self._upsert(related=[])
+        path = self.store._path_for_id(created["id"])
+        text = path.read_text(encoding="utf-8")
+        frontmatter_text = text.split("---\n")[1]
+        self.assertNotIn("related:", frontmatter_text)
+
+    def test_non_empty_tags_appear_in_frontmatter(self):
+        created = self._upsert(tags=["docker"])
+        path = self.store._path_for_id(created["id"])
+        text = path.read_text(encoding="utf-8")
+        frontmatter_text = text.split("---\n")[1]
+        self.assertIn("tags:", frontmatter_text)
+
+    def test_tags_appear_immediately_after_updated_key(self):
+        created = self._upsert(tags=["docker"], related=None)
+        path = self.store._path_for_id(created["id"])
+        text = path.read_text(encoding="utf-8")
+        frontmatter_lines = text.split("---\n")[1].splitlines()
+        keys = [line.split(":")[0] for line in frontmatter_lines if ":" in line]
+        updated_index = keys.index("updated")
+        self.assertEqual(keys[updated_index + 1], "tags")
+
+    def test_existing_file_without_tags_or_related_still_reads(self):
+        path = self.vault_dir / "memory" / "global" / "legacy.md"
+        path.parent.mkdir(parents=True)
+        path.write_text(
+            "---\ntype: profile\ncreated: '2026-01-01T00:00:00+09:00'\n"
+            "updated: '2026-01-01T00:00:00+09:00'\n---\n\n# Legacy\n\n本文\n",
+            encoding="utf-8",
+        )
+        fetched = self.store.read("global/legacy")
+        self.assertEqual(fetched["tags"], [])
+        self.assertEqual(fetched["related"], [])
+
+    def test_reading_a_legacy_file_without_tags_or_related_does_not_modify_it(self):
+        path = self.vault_dir / "memory" / "global" / "legacy.md"
+        path.parent.mkdir(parents=True)
+        original_text = (
+            "---\ntype: profile\ncreated: '2026-01-01T00:00:00+09:00'\n"
+            "updated: '2026-01-01T00:00:00+09:00'\n---\n\n# Legacy\n\n本文\n"
+        )
+        path.write_text(original_text, encoding="utf-8")
+
+        self.store.read("global/legacy")
+        self.store.iter_all()
+        self.store.search()
+
+        self.assertEqual(path.read_text(encoding="utf-8"), original_text)
+
+
+class TestMarkdownMemoryStoreTagsThreeStateSemantics(MarkdownMemoryStoreTestBase):
+    """upsert_from_observation()'s tags/related follow None=keep / list=replace / []=clear."""
+
+    def test_none_keeps_existing_tags(self):
+        self._upsert(tags=["docker"])
+        second = self._upsert(summary="好みのエディタ: VSCode", tags=None)
+        self.assertEqual(second["tags"], ["docker"])
+
+    def test_list_replaces_existing_tags(self):
+        self._upsert(tags=["docker"])
+        second = self._upsert(summary="好みのエディタ: VSCode", tags=["gpu"])
+        self.assertEqual(second["tags"], ["gpu"])
+
+    def test_empty_list_clears_existing_tags(self):
+        self._upsert(tags=["docker"])
+        second = self._upsert(summary="好みのエディタ: VSCode", tags=[])
+        self.assertEqual(second["tags"], [])
+
+    def test_none_keeps_existing_related(self):
+        other = self._upsert(key="other_key", summary="other")
+        self._upsert(related=[other["id"]])
+        second = self._upsert(summary="好みのエディタ: VSCode", related=None)
+        self.assertEqual(second["related"], [other["id"]])
+
+    def test_list_replaces_existing_related(self):
+        other_a = self._upsert(key="other_a", summary="a")
+        other_b = self._upsert(key="other_b", summary="b")
+        self._upsert(related=[other_a["id"]])
+        second = self._upsert(summary="好みのエディタ: VSCode", related=[other_b["id"]])
+        self.assertEqual(second["related"], [other_b["id"]])
+
+    def test_empty_list_clears_existing_related(self):
+        other = self._upsert(key="other_key", summary="other")
+        self._upsert(related=[other["id"]])
+        second = self._upsert(summary="好みのエディタ: VSCode", related=[])
+        self.assertEqual(second["related"], [])
+
+    def test_tags_only_change_does_not_bump_updated(self):
+        with patch("markdown_store.current_timestamp", return_value="2026-01-01T08:30:00+09:00"):
+            self._upsert()
+        with patch("markdown_store.current_timestamp", return_value="2026-01-01T09:30:00+09:00"):
+            second = self._upsert(tags=["docker"])
+        self.assertEqual(second["updated"], "2026-01-01T08:30:00+09:00")
+
+    def test_tags_only_change_does_not_append_history(self):
+        self._upsert()
+        second = self._upsert(tags=["docker"])
+        self.assertEqual(second["history"], [])
+
+    def test_self_reference_is_silently_removed(self):
+        created = self._upsert()
+        second = self._upsert(summary=created["summary"], related=[created["id"]])
+        self.assertEqual(second["related"], [])
+
+    def test_duplicate_related_ids_are_removed(self):
+        other = self._upsert(key="other_key", summary="other")
+        second = self._upsert(summary="好みのエディタ: VSCode", related=[other["id"], other["id"]])
+        self.assertEqual(second["related"], [other["id"]])
+
+    def test_tags_are_sorted_deterministically(self):
+        second = self._upsert(tags=["gpu", "docker"])
+        self.assertEqual(second["tags"], ["docker", "gpu"])
+
+
+class TestMarkdownMemoryStoreDanglingRelatedWarning(MarkdownMemoryStoreTestBase):
+    """upsert_from_observation()/update_metadata() accept a nonexistent related
+    id but warn on stderr (see plan.md design decision 2: existence
+    verification is a warning, not a write-time error)."""
+
+    def test_new_record_with_nonexistent_related_id_warns_and_is_accepted(self):
+        buffer = io.StringIO()
+        with redirect_stderr(buffer):
+            created = self._upsert(related=["global/does-not-exist"])
+
+        self.assertEqual(created["related"], ["global/does-not-exist"])
+        self.assertIn(created["id"], buffer.getvalue())
+        self.assertIn("related", buffer.getvalue())
+        self.assertIn("global/does-not-exist", buffer.getvalue())
+
+    def test_existing_record_with_nonexistent_related_id_warns_and_is_accepted(self):
+        self._upsert()
+        buffer = io.StringIO()
+        with redirect_stderr(buffer):
+            updated = self._upsert(
+                summary="好みのエディタ: VSCode", related=["global/does-not-exist"]
+            )
+
+        self.assertEqual(updated["related"], ["global/does-not-exist"])
+        self.assertIn("global/does-not-exist", buffer.getvalue())
+
+    def test_valid_related_id_does_not_warn(self):
+        other = self._upsert(key="other_key", summary="other")
+        buffer = io.StringIO()
+        with redirect_stderr(buffer):
+            self._upsert(related=[other["id"]])
+
+        self.assertEqual(buffer.getvalue(), "")
+
+    def test_omitted_related_does_not_warn(self):
+        buffer = io.StringIO()
+        with redirect_stderr(buffer):
+            self._upsert()
+
+        self.assertEqual(buffer.getvalue(), "")
+
+    def test_update_metadata_with_nonexistent_related_id_warns_and_is_accepted(self):
+        created = self._upsert()
+        buffer = io.StringIO()
+        with redirect_stderr(buffer):
+            record = self.store.update_metadata(created["id"], related=["global/does-not-exist"])
+
+        self.assertEqual(record["related"], ["global/does-not-exist"])
+        self.assertIn(created["id"], buffer.getvalue())
+        self.assertIn("global/does-not-exist", buffer.getvalue())
+
+    def test_update_metadata_returns_dangling_related_for_nonexistent_id(self):
+        created = self._upsert()
+        record = self.store.update_metadata(created["id"], related=["global/does-not-exist"])
+        self.assertEqual(record["dangling_related"], ["global/does-not-exist"])
+
+    def test_update_metadata_returns_empty_dangling_related_for_valid_id(self):
+        other = self._upsert(key="other_key", summary="other")
+        created = self._upsert()
+        record = self.store.update_metadata(created["id"], related=[other["id"]])
+        self.assertEqual(record["dangling_related"], [])
+
+    def test_update_metadata_returns_empty_dangling_related_when_related_not_touched(self):
+        created = self._upsert()
+        record = self.store.update_metadata(created["id"], tags=["docker"])
+        self.assertEqual(record["dangling_related"], [])
+
+
+class TestMarkdownMemoryStoreLenientRead(MarkdownMemoryStoreTestBase):
+    """_read_path() tolerates malformed tags/related, warning instead of failing."""
+
+    def _write_raw(self, memory_id: str, frontmatter_extra: str, title: str = "Title") -> Path:
+        path = self.vault_dir / "memory" / f"{memory_id}.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "---\ntype: profile\ncreated: '2026-01-01T00:00:00+09:00'\n"
+            f"updated: '2026-01-01T00:00:00+09:00'\n{frontmatter_extra}---\n\n"
+            f"# {title}\n\n本文\n",
+            encoding="utf-8",
+        )
+        return path
+
+    def test_missing_tags_key_defaults_to_empty_list(self):
+        self._write_raw("global/a", "")
+        fetched = self.store.read("global/a")
+        self.assertEqual(fetched["tags"], [])
+
+    def test_null_tags_defaults_to_empty_list(self):
+        self._write_raw("global/a", "tags: null\n")
+        fetched = self.store.read("global/a")
+        self.assertEqual(fetched["tags"], [])
+
+    def test_comma_separated_string_tags_are_split(self):
+        self._write_raw("global/a", "tags: docker, gpu\n")
+        fetched = self.store.read("global/a")
+        self.assertEqual(fetched["tags"], ["docker", "gpu"])
+
+    def test_non_container_tags_value_is_dropped_with_warning(self):
+        buffer = io.StringIO()
+        self._write_raw("global/a", "tags: 123\n")
+        with redirect_stderr(buffer):
+            fetched = self.store.read("global/a")
+        self.assertEqual(fetched["tags"], [])
+        self.assertIn("global/a", buffer.getvalue())
+
+    def test_dict_tags_value_is_dropped_with_warning(self):
+        buffer = io.StringIO()
+        self._write_raw("global/a", "tags:\n  key: value\n")
+        with redirect_stderr(buffer):
+            fetched = self.store.read("global/a")
+        self.assertEqual(fetched["tags"], [])
+        self.assertIn("global/a", buffer.getvalue())
+
+    def test_invalid_element_in_tags_list_is_dropped_with_warning(self):
+        buffer = io.StringIO()
+        self._write_raw("global/a", "tags:\n  - docker\n  - '!!!'\n  - 123\n  - ''\n")
+        with redirect_stderr(buffer):
+            fetched = self.store.read("global/a")
+        self.assertEqual(fetched["tags"], ["docker"])
+        self.assertIn("global/a", buffer.getvalue())
+
+    def test_missing_related_key_defaults_to_empty_list(self):
+        self._write_raw("global/a", "")
+        fetched = self.store.read("global/a")
+        self.assertEqual(fetched["related"], [])
+
+    def test_null_related_defaults_to_empty_list(self):
+        self._write_raw("global/a", "related: null\n")
+        fetched = self.store.read("global/a")
+        self.assertEqual(fetched["related"], [])
+
+    def test_string_related_value_is_dropped_with_warning(self):
+        buffer = io.StringIO()
+        self._write_raw("global/a", "related: global/b\n")
+        with redirect_stderr(buffer):
+            fetched = self.store.read("global/a")
+        self.assertEqual(fetched["related"], [])
+        self.assertIn("global/a", buffer.getvalue())
+
+    def test_malformed_related_element_is_dropped_with_warning_others_kept(self):
+        buffer = io.StringIO()
+        self._write_raw("global/a", "related:\n  - global/b\n  - bare-slug\n")
+        with redirect_stderr(buffer):
+            fetched = self.store.read("global/a")
+        self.assertEqual(fetched["related"], ["global/b"])
+        self.assertIn("global/a", buffer.getvalue())
+
+    def test_related_pointing_to_a_nonexistent_but_well_formed_id_is_kept(self):
+        fetched_path = self._write_raw("global/a", "related:\n  - global/does-not-exist\n")
+        fetched = self.store.read("global/a")
+        self.assertEqual(fetched["related"], ["global/does-not-exist"])
+        self.assertTrue(fetched_path.exists())
+
+    def test_reading_malformed_tags_does_not_modify_the_file(self):
+        path = self._write_raw("global/a", "tags:\n  - docker\n  - '!!!'\n")
+        original_text = path.read_text(encoding="utf-8")
+        self.store.read("global/a")
+        self.assertEqual(path.read_text(encoding="utf-8"), original_text)
+
+    def test_other_records_remain_searchable_when_one_has_malformed_tags(self):
+        self._write_raw("global/a", "tags: 123\n", title="Broken")
+        self._upsert(key="preferred_editor", summary="好みのエディタ: Neovim")
+        results = self.store.search()
+        titles = [r["title"] for r in results]
+        self.assertIn("Broken", titles)
+        self.assertIn("Preferred Editor", titles)
+
+    def test_malformed_tags_do_not_break_index_generation(self):
+        self._write_raw("global/a", "tags: 123\n")
+        # Any subsequent write triggers _write_index(); it must not raise.
+        self._upsert(key="preferred_editor", summary="好みのエディタ: Neovim")
+        index_text = (self.vault_dir / "memory" / INDEX_FILENAME).read_text(encoding="utf-8")
+        self.assertIn("global/a.md", index_text)
+
+    def test_malformed_tags_do_not_break_list_tags(self):
+        self._write_raw("global/a", "tags: 123\n")
+        self._upsert(key="preferred_editor", summary="好みのエディタ: Neovim", tags=["docker"])
+        tags = self.store.list_tags()
+        self.assertEqual(tags, [{"tag": "docker", "count": 1}])
+
+
+class TestMarkdownMemoryStoreSearchTags(MarkdownMemoryStoreTestBase):
+    """search(tags=...) applies an AND filter across the provided tags."""
+
+    def test_returns_only_memories_with_all_given_tags(self):
+        self._upsert(key="a", summary="a", tags=["docker", "gpu"])
+        self._upsert(key="b", summary="b", tags=["docker"])
+        self._upsert(key="c", summary="c", tags=["gpu"])
+
+        results = self.store.search(tags=["docker", "gpu"])
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["title"], "A")
+
+    def test_no_tags_filter_returns_everything(self):
+        self._upsert(key="a", summary="a", tags=["docker"])
+        results = self.store.search()
+        self.assertEqual(len(results), 1)
+
+    def test_tag_with_no_matches_returns_empty(self):
+        self._upsert(key="a", summary="a", tags=["docker"])
+        results = self.store.search(tags=["nonexistent"])
+        self.assertEqual(results, [])
+
+
+class TestMarkdownMemoryStoreRelated(MarkdownMemoryStoreTestBase):
+    """related() ranks by explicit links and shared tags."""
+
+    def test_outgoing_link_is_reported_on_the_target(self):
+        b = self._upsert(key="b_key", summary="b")
+        a = self._upsert(key="a_key", summary="a", related=[b["id"]])
+
+        result = self.store.related(b["id"])
+        hit_ids = [h["id"] for h in result["hits"]]
+        self.assertIn(a["id"], hit_ids)
+        hit = next(h for h in result["hits"] if h["id"] == a["id"])
+        self.assertEqual(hit["link"], "incoming")
+
+    def test_source_side_reports_outgoing_link(self):
+        b = self._upsert(key="b_key", summary="b")
+        a = self._upsert(key="a_key", summary="a", related=[b["id"]])
+
+        result = self.store.related(a["id"])
+        hit = next(h for h in result["hits"] if h["id"] == b["id"])
+        self.assertEqual(hit["link"], "outgoing")
+
+    def test_mutual_link_scores_higher_than_shared_tag_only(self):
+        b = self._upsert(key="b_key", summary="b", tags=["docker"])
+        a = self._upsert(key="a_key", summary="a", related=[b["id"]], tags=["docker"])
+        self.store.update_metadata(b["id"], related=[a["id"]])
+        c = self._upsert(key="c_key", summary="c", tags=["docker"])
+
+        result = self.store.related(a["id"])
+        by_id = {h["id"]: h for h in result["hits"]}
+        self.assertEqual(by_id[b["id"]]["link"], "mutual")
+        self.assertGreater(by_id[b["id"]]["score"], by_id[c["id"]]["score"])
+
+    def test_shared_tags_alone_produce_a_hit_with_matched_tags(self):
+        self._upsert(key="a_key", summary="a", tags=["docker", "gpu"])
+        b = self._upsert(key="b_key", summary="b", tags=["docker"])
+
+        result = self.store.related(b["id"])
+        hit = next(h for h in result["hits"])
+        self.assertEqual(hit["matched_tags"], ["docker"])
+        self.assertEqual(hit["link"], "none")
+
+    def test_no_shared_tags_or_links_produces_no_hit(self):
+        self._upsert(key="a_key", summary="a", tags=["docker"])
+        b = self._upsert(key="b_key", summary="b", tags=["gpu"])
+
+        result = self.store.related(b["id"])
+        self.assertEqual(result["hits"], [])
+
+    def test_dangling_reference_is_separated_from_hits(self):
+        target = self._upsert(key="target_key", summary="target")
+        source = self._upsert(key="source_key", summary="source", related=[target["id"]])
+        self.store.forget(target["id"])
+
+        result = self.store.related(source["id"])
+        hit_ids = [h["id"] for h in result["hits"]]
+        self.assertNotIn(target["id"], hit_ids)
+        self.assertIn(target["id"], result["dangling"])
+
+    def test_limit_caps_the_number_of_hits(self):
+        source = self._upsert(key="source_key", summary="source", tags=["docker"])
+        for i in range(5):
+            self._upsert(key=f"other_{i}", summary=f"other {i}", tags=["docker"])
+
+        result = self.store.related(source["id"], limit=2)
+        self.assertEqual(len(result["hits"]), 2)
+
+    def test_raises_for_nonexistent_memory_id(self):
+        with self.assertRaises(StorePathError):
+            self.store.related("global/does-not-exist")
+
+    def test_tiebreak_uses_utc_instant_not_string_order(self):
+        # 2026-09-06T10:00:00+09:00 is 01:00 UTC; 2026-09-06T02:00:00+00:00 is
+        # 02:00 UTC and therefore later, even though it sorts earlier as a
+        # bare string (see verification.md issue 2).
+        source = self._upsert(key="source_key", summary="source", tags=["docker"])
+        older = self._upsert(key="older_key", summary="older", tags=["docker"])
+        newer = self._upsert(key="newer_key", summary="newer", tags=["docker"])
+        older["updated"] = "2026-09-06T10:00:00+09:00"
+        self.store.write(older)
+        newer["updated"] = "2026-09-06T02:00:00+00:00"
+        self.store.write(newer)
+
+        result = self.store.related(source["id"])
+
+        order = [hit["id"] for hit in result["hits"]]
+        self.assertLess(order.index(newer["id"]), order.index(older["id"]))
+
+    def test_tiebreak_treats_same_instant_in_different_offsets_as_tied(self):
+        source = self._upsert(key="source_key", summary="source", tags=["docker"])
+        a = self._upsert(key="a_key", summary="a", tags=["docker"])
+        b = self._upsert(key="b_key", summary="b", tags=["docker"])
+        a["updated"] = "2026-09-06T10:00:00+09:00"  # 01:00 UTC
+        self.store.write(a)
+        b["updated"] = "2026-09-06T01:00:00+00:00"  # same instant, 01:00 UTC
+        self.store.write(b)
+
+        result = self.store.related(source["id"])
+
+        # Tied score and tied instant -> tiebreak falls through to id
+        # ascending, regardless of which of a/b was written to disk last.
+        order = [hit["id"] for hit in result["hits"]]
+        self.assertEqual(order, sorted([a["id"], b["id"]]))
+
+    def test_tiebreak_handles_legacy_date_only_updated_value(self):
+        source = self._upsert(key="source_key", summary="source", tags=["docker"])
+        legacy = self._upsert(key="legacy_key", summary="legacy", tags=["docker"])
+        recent = self._upsert(key="recent_key", summary="recent", tags=["docker"])
+        legacy["updated"] = "2020-01-01"
+        self.store.write(legacy)
+        recent["updated"] = "2026-09-06T00:00:00+00:00"
+        self.store.write(recent)
+
+        result = self.store.related(source["id"])
+
+        order = [hit["id"] for hit in result["hits"]]
+        self.assertLess(order.index(recent["id"]), order.index(legacy["id"]))
+
+    def test_tiebreak_handles_missing_updated_value_without_raising(self):
+        # A single hit would never actually invoke the sort comparison, so
+        # this needs a second, normally-timestamped hit for the None-vs-str
+        # comparison to actually occur (and previously raise TypeError).
+        source = self._upsert(key="source_key", summary="source", tags=["docker"])
+        broken = self._upsert(key="broken_key", summary="broken", tags=["docker"])
+        normal = self._upsert(key="normal_key", summary="normal", tags=["docker"])
+        broken["updated"] = None
+        self.store.write(broken)
+
+        result = self.store.related(source["id"])
+
+        hit_ids = [hit["id"] for hit in result["hits"]]
+        self.assertEqual(set(hit_ids), {broken["id"], normal["id"]})
+
+    def test_rejects_zero_limit(self):
+        created = self._upsert()
+        with self.assertRaises(ValueError):
+            self.store.related(created["id"], limit=0)
+
+    def test_rejects_negative_limit(self):
+        created = self._upsert()
+        with self.assertRaises(ValueError):
+            self.store.related(created["id"], limit=-1)
+
+
+class TestMarkdownMemoryStoreListTags(MarkdownMemoryStoreTestBase):
+    """list_tags() aggregates tag usage counts across all active memories."""
+
+    def test_counts_and_sorts_by_count_descending(self):
+        self._upsert(key="a", summary="a", tags=["docker", "gpu"])
+        self._upsert(key="b", summary="b", tags=["docker"])
+
+        tags = self.store.list_tags()
+
+        self.assertEqual(tags, [{"tag": "docker", "count": 2}, {"tag": "gpu", "count": 1}])
+
+    def test_ties_are_sorted_alphabetically(self):
+        self._upsert(key="a", summary="a", tags=["zeta", "alpha"])
+
+        tags = self.store.list_tags()
+
+        self.assertEqual(tags, [{"tag": "alpha", "count": 1}, {"tag": "zeta", "count": 1}])
+
+    def test_empty_store_returns_empty_list(self):
+        self.assertEqual(self.store.list_tags(), [])
+
+    def test_forgotten_memory_tags_are_excluded(self):
+        created = self._upsert(tags=["docker"])
+        self.store.forget(created["id"])
+        self.assertEqual(self.store.list_tags(), [])
+
+
+class TestMarkdownMemoryStoreIndexTags(MarkdownMemoryStoreTestBase):
+    """_index.md shows an inline-code tag suffix for tagged memories."""
+
+    def test_tagged_memory_shows_inline_tags_suffix(self):
+        self._upsert(tags=["docker", "gpu"])
+        index_text = (self.vault_dir / "memory" / INDEX_FILENAME).read_text(encoding="utf-8")
+        self.assertIn("`tags: docker, gpu`", index_text)
+
+    def test_untagged_memory_has_no_tags_suffix(self):
+        self._upsert()
+        index_text = (self.vault_dir / "memory" / INDEX_FILENAME).read_text(encoding="utf-8")
+        self.assertNotIn("`tags:", index_text)
+
+    def test_related_is_not_shown_in_index(self):
+        other = self._upsert(key="other_key", summary="other")
+        self._upsert(related=[other["id"]])
+        index_text = (self.vault_dir / "memory" / INDEX_FILENAME).read_text(encoding="utf-8")
+        self.assertNotIn("related", index_text)
+
+
+class TestMarkdownMemoryStoreUpdateMetadata(MarkdownMemoryStoreTestBase):
+    """update_metadata() replaces only tags/related, preserving the rest byte-for-byte."""
+
+    def _write_hand_edited(self, memory_id: str) -> Path:
+        path = self.vault_dir / "memory" / f"{memory_id}.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "---\ntype: reference\ncreated: '2026-01-01T09:00:00+09:00'\n"
+            "updated: '2026-01-05T09:00:00+09:00'\ncustom_field: kept\n---\n\n"
+            "# Hand Edited Title\n\n本文の要約\n\n## 変更履歴\n\n"
+            "- 2026-01-02: 旧要約 → 本文の要約 に変更\n",
+            encoding="utf-8",
+        )
+        return path
+
+    def test_replaces_tags_and_preserves_body_byte_for_byte(self):
+        path = self._write_hand_edited("global/hand-edited")
+        original_bytes = path.read_bytes()
+
+        self.store.update_metadata("global/hand-edited", tags=["docker"])
+
+        new_bytes = path.read_bytes()
+        original_body = original_bytes.split(b"---\n", 2)[-1]
+        new_body = new_bytes.split(b"---\n", 2)[-1]
+        self.assertEqual(new_body, original_body)
+
+    def test_preserves_whitespace_irregular_body_byte_for_byte(self):
+        # A body with a blank line right after the frontmatter delimiter, an
+        # embedded blank line, and two trailing blank lines at EOF -- none of
+        # this is the store's own normalized shape (see write()/_render_
+        # markdown()), so it exercises whitespace _parse_markdown() would
+        # otherwise normalize away (lstrip/rstrip on "\n").
+        path = self.vault_dir / "memory" / "global" / "whitespace-edited.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        original_bytes = (
+            "---\ntype: reference\ncreated: '2026-01-01T09:00:00+09:00'\n"
+            "updated: '2026-01-05T09:00:00+09:00'\n---\n\n"
+            "# Whitespace Edited\n\n本文の一段落目\n\n本文の二段落目\n\n\n"
+        ).encode("utf-8")
+        path.write_bytes(original_bytes)
+
+        self.store.update_metadata("global/whitespace-edited", tags=["docker"])
+
+        new_bytes = path.read_bytes()
+        new_body = new_bytes.split(b"---\n", 2)[-1]
+        original_body = original_bytes.split(b"---\n", 2)[-1]
+        self.assertEqual(new_body, original_body)
+
+    def test_preserves_crlf_body_byte_for_byte(self):
+        # The body was hand-edited on Windows (CRLF line endings); only the
+        # store-managed frontmatter uses LF. Path.read_text()'s universal
+        # newlines would silently translate "\r\n" -> "\n" on read, and the
+        # translation is invisible unless bytes are compared directly.
+        path = self.vault_dir / "memory" / "global" / "crlf-edited.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        original_bytes = (
+            b"---\ntype: reference\ncreated: '2026-01-01T09:00:00+09:00'\n"
+            b"updated: '2026-01-05T09:00:00+09:00'\n---\n"
+            b"\r\n# CRLF Title\r\n\r\nBody line one\r\nBody line two\r\n"
+        )
+        path.write_bytes(original_bytes)
+
+        self.store.update_metadata("global/crlf-edited", tags=["docker"])
+
+        new_bytes = path.read_bytes()
+        original_body = original_bytes.split(b"---\n", 2)[-1]
+        new_body = new_bytes.split(b"---\n", 2)[-1]
+        self.assertEqual(new_body, original_body)
+
+    def test_preserves_mixed_newlines_in_body_byte_for_byte(self):
+        path = self.vault_dir / "memory" / "global" / "mixed-edited.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        original_bytes = (
+            b"---\ntype: reference\ncreated: '2026-01-01T09:00:00+09:00'\n"
+            b"updated: '2026-01-05T09:00:00+09:00'\n---\n"
+            b"\n# Mixed Title\r\n\nBody line one\r\nBody line two\n"
+        )
+        path.write_bytes(original_bytes)
+
+        self.store.update_metadata("global/mixed-edited", tags=["docker"])
+
+        new_bytes = path.read_bytes()
+        original_body = original_bytes.split(b"---\n", 2)[-1]
+        new_body = new_bytes.split(b"---\n", 2)[-1]
+        self.assertEqual(new_body, original_body)
+
+    def test_preserves_type_created_updated_and_unknown_frontmatter_key(self):
+        self._write_hand_edited("global/hand-edited")
+
+        record = self.store.update_metadata("global/hand-edited", tags=["docker"])
+
+        self.assertEqual(record["type"], "reference")
+        self.assertEqual(record["created"], "2026-01-01T09:00:00+09:00")
+        self.assertEqual(record["updated"], "2026-01-05T09:00:00+09:00")
+        path = self.store._path_for_id("global/hand-edited")
+        self.assertIn("custom_field: kept", path.read_text(encoding="utf-8"))
+
+    def test_none_keeps_field_untouched(self):
+        self._write_hand_edited("global/hand-edited")
+        self.store.update_metadata("global/hand-edited", tags=["docker"])
+
+        record = self.store.update_metadata("global/hand-edited", related=["global/other"])
+
+        self.assertEqual(record["tags"], ["docker"])
+
+    def test_list_replaces_field(self):
+        self._write_hand_edited("global/hand-edited")
+        self.store.update_metadata("global/hand-edited", tags=["docker"])
+
+        record = self.store.update_metadata("global/hand-edited", tags=["gpu", "linux"])
+
+        self.assertEqual(record["tags"], ["gpu", "linux"])
+
+    def test_empty_list_clears_field(self):
+        self._write_hand_edited("global/hand-edited")
+        self.store.update_metadata("global/hand-edited", tags=["docker"])
+
+        record = self.store.update_metadata("global/hand-edited", tags=[])
+
+        self.assertEqual(record["tags"], [])
+        path = self.store._path_for_id("global/hand-edited")
+        self.assertNotIn("tags:", path.read_text(encoding="utf-8").split("---\n")[1])
+
+    def test_both_none_raises(self):
+        self._write_hand_edited("global/hand-edited")
+        with self.assertRaises(ValueError):
+            self.store.update_metadata("global/hand-edited")
+
+    def test_nonexistent_id_raises(self):
+        with self.assertRaises(ValueError):
+            self.store.update_metadata("global/does-not-exist", tags=["docker"])
+
+    def test_malformed_memory_id_raises(self):
+        with self.assertRaises(StorePathError):
+            self.store.update_metadata("bare-slug", tags=["docker"])
+
+    def _assert_rejected_without_side_effects(self, memory_id: str, original_bytes: bytes) -> None:
+        index_path = self.vault_dir / "memory" / INDEX_FILENAME
+        index_before = index_path.read_text(encoding="utf-8") if index_path.exists() else None
+
+        with self.assertRaises(ValueError):
+            self.store.update_metadata(memory_id, tags=["docker"])
+
+        path = self.store._path_for_id(memory_id)
+        self.assertEqual(path.read_bytes(), original_bytes)
+        index_after = index_path.read_text(encoding="utf-8") if index_path.exists() else None
+        self.assertEqual(index_after, index_before)
+
+    def test_bom_prefixed_file_is_rejected_without_side_effects(self):
+        path = self.vault_dir / "memory" / "global" / "bom-edited.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        original_bytes = (
+            "﻿---\ntype: reference\ncreated: '2026-01-01T09:00:00+09:00'\n"
+            "updated: '2026-01-05T09:00:00+09:00'\n---\n\n# BOM Title\n\n本文\n"
+        ).encode("utf-8")
+        path.write_bytes(original_bytes)
+
+        self._assert_rejected_without_side_effects("global/bom-edited", original_bytes)
+
+    def test_plain_markdown_without_frontmatter_is_rejected_without_side_effects(self):
+        path = self.vault_dir / "memory" / "global" / "no-frontmatter.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        original_bytes = "# No Frontmatter\n\nこれはただの本文です。\n".encode()
+        path.write_bytes(original_bytes)
+
+        self._assert_rejected_without_side_effects("global/no-frontmatter", original_bytes)
+
+    def test_unterminated_frontmatter_is_rejected_without_side_effects(self):
+        path = self.vault_dir / "memory" / "global" / "unterminated.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        original_bytes = (
+            "---\ntype: reference\ncreated: '2026-01-01T09:00:00+09:00'\n"
+            "updated: '2026-01-05T09:00:00+09:00'\n\n# Unterminated\n\n本文\n"
+        ).encode("utf-8")
+        path.write_bytes(original_bytes)
+
+        self._assert_rejected_without_side_effects("global/unterminated", original_bytes)
+
+    def test_repeated_identical_update_does_not_increase_memory_count(self):
+        self._write_hand_edited("global/hand-edited")
+        self.store.update_metadata("global/hand-edited", tags=["docker"])
+        self.store.update_metadata("global/hand-edited", tags=["docker"])
+
+        self.assertEqual(len(_non_index_files(self.vault_dir / "memory")), 1)
+
+    def test_repeated_identical_update_does_not_rewrite_the_file(self):
+        self._write_hand_edited("global/hand-edited")
+        self.store.update_metadata("global/hand-edited", tags=["docker"])
+        path = self.store._path_for_id("global/hand-edited")
+        first_text = path.read_text(encoding="utf-8")
+
+        self.store.update_metadata("global/hand-edited", tags=["docker"])
+
+        self.assertEqual(path.read_text(encoding="utf-8"), first_text)
+
+    def test_related_only_update_does_not_touch_unrelated_malformed_tags(self):
+        path = self.vault_dir / "memory" / "global" / "hand-edited.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "---\ntype: reference\ncreated: '2026-01-01T09:00:00+09:00'\n"
+            "updated: '2026-01-05T09:00:00+09:00'\ntags: 123\n---\n\n"
+            "# Hand Edited Title\n\n本文の要約\n",
+            encoding="utf-8",
+        )
+        other = self._upsert(key="other_key", summary="other")
+
+        self.store.update_metadata("global/hand-edited", related=[other["id"]])
+
+        raw_text = self.store._path_for_id("global/hand-edited").read_text(encoding="utf-8")
+        self.assertIn("tags: 123", raw_text)
+
+    def test_self_reference_is_removed_from_related(self):
+        self._write_hand_edited("global/hand-edited")
+
+        record = self.store.update_metadata("global/hand-edited", related=["global/hand-edited"])
+
+        self.assertEqual(record["related"], [])
+
+    def test_returned_record_reflects_updated_tags(self):
+        self._write_hand_edited("global/hand-edited")
+
+        record = self.store.update_metadata("global/hand-edited", tags=["docker", "gpu"])
+
+        self.assertEqual(record["tags"], ["docker", "gpu"])
+        fetched = self.store.read("global/hand-edited")
+        self.assertEqual(fetched["tags"], ["docker", "gpu"])
 
 
 if __name__ == "__main__":

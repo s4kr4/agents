@@ -71,6 +71,8 @@ def create_server() -> FastMCP:
             source="mcp",
             extractor_version="mcp-v1",
             require_session=False,
+            tags=None,
+            related=None,
         )
         defaults.update(values)
         return Namespace(**defaults)
@@ -113,6 +115,7 @@ def create_server() -> FastMCP:
         scope: Literal["global", "project", "client", "temporary"] | None = None,
         project_id: str | None = None,
         entity_id: str | None = None,
+        tags: list[str] | None = None,
         limit: Annotated[int, Field(strict=True, ge=1, le=100)] = 10,
     ) -> dict[str, Any]:
         """共有メモリを検索する。"""
@@ -123,6 +126,7 @@ def create_server() -> FastMCP:
             scope=scope,
             project_id=project_id,
             entity_id=entity_id,
+            tags=tags,
             limit=limit,
         )
 
@@ -164,6 +168,8 @@ def create_server() -> FastMCP:
         project_id: str | None = None,
         entity_type: str = "user",
         entity_id: str = "default",
+        tags: list[str] | None = None,
+        related: list[str] | None = None,
         session_id: str | None = None,
         ctx: Context | None = None,
     ) -> dict[str, Any]:
@@ -181,6 +187,8 @@ def create_server() -> FastMCP:
             project_id=project_id,
             entity_type=entity_type,
             entity_id=entity_id,
+            tags=tags,
+            related=related,
             session_id=session_id,
             require_session=explicit_session,
         )
@@ -210,6 +218,8 @@ def create_server() -> FastMCP:
             project_id=project_id,
             entity_type=entity_type,
             entity_id=entity_id,
+            tags=tags,
+            related=related,
             session_id=session_id,
             source="mcp_extract" if explicit_session else "mcp",
             require_session=explicit_session,
@@ -231,6 +241,30 @@ def create_server() -> FastMCP:
     def mark_extracted(session_id: str) -> dict[str, Any]:
         """指定したセッションを処理済みにする。"""
         return call("mark_extracted", session_id=session_id)
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True))
+    def related(
+        memory_id: str,
+        limit: Annotated[int, Field(strict=True, ge=1, le=100)] = 10,
+    ) -> dict[str, Any]:
+        """共有タグと明示リンクから、指定した記憶に関連する記憶を探す。"""
+        return call("related", memory_id=memory_id, limit=limit)
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=True, idempotentHint=True))
+    def list_tags() -> dict[str, Any]:
+        """既存のタグと件数の一覧を取得する。"""
+        return call("list_tags")
+
+    @server.tool(
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True)
+    )
+    def update_metadata(
+        memory_id: str,
+        tags: list[str] | None = None,
+        related: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """既存記憶のタグ・関連だけを、本文を変えずに更新する。"""
+        return call("update_metadata", memory_id=memory_id, tags=tags, related=related)
 
     return server
 

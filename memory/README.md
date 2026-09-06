@@ -6,7 +6,9 @@ Codex、Claude Code、Claude Desktop など複数の LLM クライアントか�
 
 - クライアント間で安定した記憶を共有する
 - `get_context`、`search`、`history` で既存の記憶を参照する
-- `write_memory` でユーザーの好み、プロジェクトの決定事項、協働上の知見を保存する
+- `write_memory` でユーザーの好み、プロジェクトの決定事項、協働上の知見をタグ・関連記憶付きで保存する
+- `related` で共有タグと明示リンクから関連記憶を探す。`list_tags` で既存タグと件数を確認する
+- `update_metadata` で本文を変えずに既存記憶のタグ・関連だけを更新する
 - `forget` で記憶を撤回する
 - `list_unextracted` と `mark_extracted` でセッションからの知識抽出を管理する
 - Codex と Claude Code から同じ stdio MCP サーバーを利用する
@@ -141,7 +143,7 @@ Codex は同一ホストの CLI・IDE・Desktop で MCP 設定を共有します
 
 ### 4. 再起動と読み書き確認
 
-設定変更後は `resume` ではなくクライアントを完全終了して新しく起動します。Codex は `codex mcp get shared-memory`、Claude Code は `claude mcp list` で `shared-memory` が接続済み（`✔ Connected`）になり、7 ツールが列挙されることを確認します。`get_context` で既存の記憶が見えるか、`write_memory` で実際にデータを書き込めるか確認してください。
+設定変更後は `resume` ではなくクライアントを完全終了して新しく起動します。Codex は `codex mcp get shared-memory`、Claude Code は `claude mcp list` で `shared-memory` が接続済み（`✔ Connected`）になり、10 ツールが列挙されることを確認します。`get_context` で既存の記憶が見えるか、`write_memory` で実際にデータを書き込めるか確認してください。
 
 日常の `write_memory` は `session_id` 省略可能です。セッション抽出では元セッションの ID を必ず渡し、プロジェクトを保持します。すべての保存に成功した後だけ `mark_extracted` を呼びます。
 

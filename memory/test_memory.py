@@ -8,7 +8,9 @@ import io
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import memory as mem
@@ -1038,6 +1040,571 @@ class TestVaultAndLocalDirFlags(unittest.TestCase):
         parser = mem.build_parser()
         args = parser.parse_args(["--local-dir", "/some/local", "cleanup"])
         self.assertEqual(args.local_dir, Path("/some/local"))
+
+
+class TestSerializeMemoryTags(unittest.TestCase):
+    """serialize_memory() always includes tags/related (empty list by default)."""
+
+    def _record(self, **overrides):
+        defaults = {
+            "id": "global/x",
+            "type": "profile",
+            "title": "X",
+            "summary": "s",
+            "scope": "global",
+            "project_id": None,
+            "entity_id": None,
+            "updated": "2026-01-01T00:00:00+09:00",
+        }
+        defaults.update(overrides)
+        return defaults
+
+    def test_defaults_to_empty_tags_and_related_when_absent(self):
+        result = mem.serialize_memory(self._record())
+        self.assertEqual(result["tags"], [])
+        self.assertEqual(result["related"], [])
+
+    def test_includes_provided_tags_and_related(self):
+        result = mem.serialize_memory(self._record(tags=["docker"], related=["global/y"]))
+        self.assertEqual(result["tags"], ["docker"])
+        self.assertEqual(result["related"], ["global/y"])
+
+
+class TestSerializeHistoryMemoryTags(unittest.TestCase):
+    """serialize_history_memory() includes tags (see completion criteria's tags-only scope)."""
+
+    def test_includes_tags(self):
+        row = {
+            "id": "global/x",
+            "type": "profile",
+            "scope": "global",
+            "title": "X",
+            "summary": "s",
+            "project_id": None,
+            "entity_id": None,
+            "updated": "2026-01-01T00:00:00+09:00",
+            "history": [],
+            "tags": ["docker"],
+        }
+        result = mem.serialize_history_memory(row, None)
+        self.assertEqual(result["tags"], ["docker"])
+
+    def test_defaults_to_empty_list_when_absent(self):
+        row: dict[str, Any] = {
+            "id": "global/x",
+            "type": "profile",
+            "scope": "global",
+            "title": "X",
+            "summary": "s",
+            "project_id": None,
+            "entity_id": None,
+            "updated": "2026-01-01T00:00:00+09:00",
+            "history": [],
+        }
+        result = mem.serialize_history_memory(row, None)
+        self.assertEqual(result["tags"], [])
+
+
+class TestValidateWriteMemoryTagsRelated(CliTestBase):
+    """validate_write_memory() strictly validates tags/related when provided."""
+
+    def _base_args(self, **overrides):
+        defaults = {
+            "key": "k",
+            "summary": "s",
+            "entity_type": "user",
+            "entity_id": "default",
+            "memory_type": "profile",
+            "scope": "global",
+            "confidence": 0.8,
+            "project_id": None,
+            "session_id": None,
+        }
+        defaults.update(overrides)
+        return self.make_args(**defaults)
+
+    def test_omitted_tags_and_related_pass(self):
+        mem.validate_write_memory(self._base_args())
+
+    def test_valid_tags_and_related_pass(self):
+        mem.validate_write_memory(self._base_args(tags=["Docker"], related=["global/other"]))
+
+    def test_invalid_tag_raises_memory_usage_error(self):
+        with self.assertRaises(mem.MemoryUsageError):
+            mem.validate_write_memory(self._base_args(tags=["!!!"]))
+
+    def test_empty_string_tag_raises_memory_usage_error(self):
+        with self.assertRaises(mem.MemoryUsageError):
+            mem.validate_write_memory(self._base_args(tags=[""]))
+
+    def test_non_list_tags_raises_memory_usage_error(self):
+        with self.assertRaises(mem.MemoryUsageError):
+            mem.validate_write_memory(self._base_args(tags="docker"))
+
+    def test_invalid_related_id_raises_memory_usage_error(self):
+        with self.assertRaises(mem.MemoryUsageError):
+            mem.validate_write_memory(self._base_args(related=["bare-slug"]))
+
+    def test_invalid_related_id_error_message_names_field_and_value(self):
+        with self.assertRaises(mem.MemoryUsageError) as ctx:
+            mem.validate_write_memory(self._base_args(related=["bare-slug"]))
+        self.assertIn("related", str(ctx.exception))
+        self.assertIn("bare-slug", str(ctx.exception))
+
+    def test_empty_string_related_raises_memory_usage_error(self):
+        with self.assertRaises(mem.MemoryUsageError):
+            mem.validate_write_memory(self._base_args(related=[""]))
+
+    def test_empty_list_tags_and_related_are_valid(self):
+        mem.validate_write_memory(self._base_args(tags=[], related=[]))
+
+
+class TestCmdWriteMemoryTagsRelated(CliTestBase):
+    """write-memory's tags/related follow the None=keep/list=replace/[]=clear semantics."""
+
+    def _write(self, session_id, summary, **overrides):
+        defaults = {
+            "session_id": session_id,
+            "memory_type": "profile",
+            "entity_type": "user",
+            "entity_id": "default",
+            "key": "preferred_editor",
+            "summary": summary,
+            "confidence": 0.8,
+            "scope": "global",
+            "project_id": None,
+            "tags": None,
+            "related": None,
+        }
+        defaults.update(overrides)
+        return self.run_cmd(mem.cmd_write_memory, **defaults)
+
+    def test_tags_reach_vault_frontmatter(self):
+        self._write("s1", "好みのエディタ: Neovim", tags=["Docker", "GPU"])
+        active = self.markdown_store.search(type="profile")
+        self.assertEqual(active[0]["tags"], ["docker", "gpu"])
+
+    def test_related_reaches_vault_frontmatter(self):
+        other = self.markdown_store.upsert_from_observation(
+            type="profile",
+            entity_type="user",
+            entity_id="default",
+            key="other_key",
+            scope="global",
+            project_id=None,
+            summary="other",
+        )
+        self._write("s1", "好みのエディタ: Neovim", related=[other["id"]])
+        active = [m for m in self.markdown_store.search(type="profile") if m["id"] != other["id"]]
+        self.assertEqual(active[0]["related"], [other["id"]])
+
+    def test_omitted_tags_keeps_existing_on_resubmission(self):
+        self._write("s1", "好みのエディタ: Neovim", tags=["docker"])
+        self._write("s2", "好みのエディタ: VSCode", tags=None)
+        active = self.markdown_store.search(type="profile")
+        self.assertEqual(active[0]["tags"], ["docker"])
+
+    def test_empty_list_clears_existing_tags(self):
+        self._write("s1", "好みのエディタ: Neovim", tags=["docker"])
+        self._write("s2", "好みのエディタ: VSCode", tags=[])
+        active = self.markdown_store.search(type="profile")
+        self.assertEqual(active[0]["tags"], [])
+
+    def test_invalid_tag_raises_system_exit_and_writes_nothing(self):
+        with self.assertRaises(SystemExit):
+            self._write("s1", "好みのエディタ: Neovim", tags=["!!!"])
+        self.assertEqual(self.markdown_store.search(), [])
+
+    def test_invalid_related_raises_system_exit_and_writes_nothing(self):
+        with self.assertRaises(SystemExit):
+            self._write("s1", "好みのエディタ: Neovim", related=["bare-slug"])
+        self.assertEqual(self.markdown_store.search(), [])
+
+    def test_nonexistent_related_id_is_accepted_and_reported_as_dangling(self):
+        result = self._write("s1", "好みのエディタ: Neovim", related=["global/does-not-exist"])
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["dangling_related"], ["global/does-not-exist"])
+        active = self.markdown_store.search(type="profile")
+        self.assertEqual(active[0]["related"], ["global/does-not-exist"])
+
+    def test_valid_related_id_reports_empty_dangling_related(self):
+        other = self.markdown_store.upsert_from_observation(
+            type="profile",
+            entity_type="user",
+            entity_id="default",
+            key="other_key",
+            scope="global",
+            project_id=None,
+            summary="other",
+        )
+        result = self._write("s1", "好みのエディタ: Neovim", related=[other["id"]])
+        self.assertEqual(result["dangling_related"], [])
+
+    def test_omitted_related_reports_empty_dangling_related(self):
+        result = self._write("s1", "好みのエディタ: Neovim")
+        self.assertEqual(result["dangling_related"], [])
+
+
+class TestWriteMemoryTagsArgparse(unittest.TestCase):
+    """write-memory's --tag/--related/--clear-tags/--clear-related argparse wiring."""
+
+    def _parse(self, *extra):
+        parser = mem.build_parser()
+        return parser.parse_args(
+            [
+                "write-memory",
+                "--session-id",
+                "s",
+                "--memory-type",
+                "profile",
+                "--key",
+                "k",
+                "--summary",
+                "s",
+                *extra,
+            ]
+        )
+
+    def test_tag_option_accumulates_into_tags_list(self):
+        args = self._parse("--tag", "docker", "--tag", "gpu")
+        self.assertEqual(args.tags, ["docker", "gpu"])
+
+    def test_related_option_accumulates_into_related_list(self):
+        args = self._parse("--related", "global/a", "--related", "global/b")
+        self.assertEqual(args.related, ["global/a", "global/b"])
+
+    def test_tags_and_related_default_to_none(self):
+        args = self._parse()
+        self.assertIsNone(args.tags)
+        self.assertIsNone(args.related)
+
+    def test_clear_tags_sets_empty_list(self):
+        args = self._parse("--clear-tags")
+        self.assertEqual(args.tags, [])
+
+    def test_clear_related_sets_empty_list(self):
+        args = self._parse("--clear-related")
+        self.assertEqual(args.related, [])
+
+    def test_tag_and_clear_tags_are_mutually_exclusive(self):
+        with self.assertRaises(SystemExit):
+            with redirect_stderr(io.StringIO()):
+                self._parse("--tag", "docker", "--clear-tags")
+
+    def test_related_and_clear_related_are_mutually_exclusive(self):
+        with self.assertRaises(SystemExit):
+            with redirect_stderr(io.StringIO()):
+                self._parse("--related", "global/a", "--clear-related")
+
+
+class TestSearchTagsArgparse(unittest.TestCase):
+    """search's --tag argparse wiring."""
+
+    def test_tag_option_accumulates(self):
+        parser = mem.build_parser()
+        args = parser.parse_args(["search", "--tag", "docker", "--tag", "gpu"])
+        self.assertEqual(args.tags, ["docker", "gpu"])
+
+    def test_tags_default_to_none(self):
+        parser = mem.build_parser()
+        args = parser.parse_args(["search"])
+        self.assertIsNone(args.tags)
+
+
+class TestCmdSearchTags(CliTestBase):
+    """search --tag applies an AND filter (see run_search())."""
+
+    def _seed(self, key, summary, tags):
+        self.markdown_store.upsert_from_observation(
+            type="profile",
+            entity_type="user",
+            entity_id="default",
+            key=key,
+            scope="global",
+            project_id=None,
+            summary=summary,
+            tags=tags,
+        )
+
+    def _search(self, **overrides):
+        defaults = {
+            "session_id": None,
+            "query": None,
+            "entity_id": None,
+            "memory_type": None,
+            "scope": None,
+            "project_id": None,
+            "tags": None,
+            "limit": 10,
+        }
+        defaults.update(overrides)
+        return self.run_cmd(mem.cmd_search, **defaults)
+
+    def test_returns_only_memories_with_all_given_tags(self):
+        self._seed("a", "a", ["docker", "gpu"])
+        self._seed("b", "b", ["docker"])
+
+        result = self._search(tags=["docker", "gpu"])
+
+        self.assertEqual(result["count"], 1)
+        self.assertEqual(result["memories"][0]["title"], "A")
+
+    def test_invalid_search_tag_raises_system_exit(self):
+        with self.assertRaises(SystemExit):
+            self._search(tags=["!!!"])
+
+
+class TestRelatedListTagsSubcommandsRegistered(unittest.TestCase):
+    def test_related_subcommand_registered_with_default_limit(self):
+        parser = mem.build_parser()
+        args = parser.parse_args(["related", "--memory-id", "global/x"])
+        self.assertEqual(args.command, "related")
+        self.assertIs(args.func, mem.cmd_related)
+        self.assertEqual(args.limit, 10)
+
+    def test_list_tags_subcommand_registered(self):
+        parser = mem.build_parser()
+        args = parser.parse_args(["list-tags"])
+        self.assertEqual(args.command, "list-tags")
+        self.assertIs(args.func, mem.cmd_list_tags)
+
+
+class TestCmdRelated(CliTestBase):
+    def test_returns_hits_with_score_matched_tags_and_link(self):
+        b = self.markdown_store.upsert_from_observation(
+            type="profile",
+            entity_type="user",
+            entity_id="default",
+            key="b_key",
+            scope="global",
+            project_id=None,
+            summary="b",
+        )
+        a = self.markdown_store.upsert_from_observation(
+            type="profile",
+            entity_type="user",
+            entity_id="default",
+            key="a_key",
+            scope="global",
+            project_id=None,
+            summary="a",
+            related=[b["id"]],
+        )
+
+        result = self.run_cmd(mem.cmd_related, memory_id=b["id"], limit=10)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["hits"][0]["id"], a["id"])
+        self.assertEqual(result["hits"][0]["link"], "incoming")
+        self.assertIn("score", result["hits"][0])
+        self.assertIn("matched_tags", result["hits"][0])
+        self.assertEqual(result["dangling"], [])
+
+    def test_unknown_memory_id_raises_system_exit(self):
+        with self.assertRaises(SystemExit):
+            self.run_cmd(mem.cmd_related, memory_id="global/does-not-exist", limit=10)
+
+    def test_out_of_range_limit_raises_system_exit(self):
+        created = self.markdown_store.upsert_from_observation(
+            type="profile",
+            entity_type="user",
+            entity_id="default",
+            key="a",
+            scope="global",
+            project_id=None,
+            summary="a",
+        )
+        for limit in (-1, 0, 101):
+            with self.subTest(limit=limit), self.assertRaises(SystemExit):
+                self.run_cmd(mem.cmd_related, memory_id=created["id"], limit=limit)
+
+    def test_boundary_limit_values_are_accepted(self):
+        created = self.markdown_store.upsert_from_observation(
+            type="profile",
+            entity_type="user",
+            entity_id="default",
+            key="a",
+            scope="global",
+            project_id=None,
+            summary="a",
+        )
+        for limit in (1, 100):
+            with self.subTest(limit=limit):
+                result = self.run_cmd(mem.cmd_related, memory_id=created["id"], limit=limit)
+                self.assertTrue(result["ok"])
+
+
+class TestCmdListTags(CliTestBase):
+    def test_returns_tags_with_counts_descending(self):
+        self.markdown_store.upsert_from_observation(
+            type="profile",
+            entity_type="user",
+            entity_id="default",
+            key="a",
+            scope="global",
+            project_id=None,
+            summary="a",
+            tags=["docker", "gpu"],
+        )
+        self.markdown_store.upsert_from_observation(
+            type="profile",
+            entity_type="user",
+            entity_id="default",
+            key="b",
+            scope="global",
+            project_id=None,
+            summary="b",
+            tags=["docker"],
+        )
+
+        result = self.run_cmd(mem.cmd_list_tags)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            result["tags"], [{"tag": "docker", "count": 2}, {"tag": "gpu", "count": 1}]
+        )
+
+
+class TestUpdateMetadataArgparse(unittest.TestCase):
+    def _parse(self, *extra):
+        parser = mem.build_parser()
+        return parser.parse_args(["update-metadata", "--memory-id", "global/x", *extra])
+
+    def test_subcommand_registered(self):
+        args = self._parse("--tag", "docker")
+        self.assertEqual(args.command, "update-metadata")
+        self.assertIs(args.func, mem.cmd_update_metadata)
+        self.assertEqual(args.tags, ["docker"])
+
+    def test_tags_and_related_default_to_none(self):
+        args = self._parse()
+        self.assertIsNone(args.tags)
+        self.assertIsNone(args.related)
+
+    def test_clear_tags_and_clear_related_set_empty_lists(self):
+        args = self._parse("--clear-tags", "--clear-related")
+        self.assertEqual(args.tags, [])
+        self.assertEqual(args.related, [])
+
+    def test_tag_and_clear_tags_are_mutually_exclusive(self):
+        with self.assertRaises(SystemExit):
+            with redirect_stderr(io.StringIO()):
+                self._parse("--tag", "docker", "--clear-tags")
+
+    def test_related_and_clear_related_are_mutually_exclusive(self):
+        with self.assertRaises(SystemExit):
+            with redirect_stderr(io.StringIO()):
+                self._parse("--related", "global/a", "--clear-related")
+
+    def test_memory_id_is_required(self):
+        parser = mem.build_parser()
+        with self.assertRaises(SystemExit):
+            with redirect_stderr(io.StringIO()):
+                parser.parse_args(["update-metadata", "--tag", "docker"])
+
+
+class TestCmdUpdateMetadata(CliTestBase):
+    def _create(self):
+        return self.markdown_store.upsert_from_observation(
+            type="profile",
+            entity_type="user",
+            entity_id="default",
+            key="preferred_editor",
+            scope="global",
+            project_id=None,
+            summary="好みのエディタ: Neovim",
+        )
+
+    def test_updates_tags_and_returns_serialized_memory(self):
+        created = self._create()
+
+        result = self.run_cmd(
+            mem.cmd_update_metadata, memory_id=created["id"], tags=["docker"], related=None
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["memory"]["tags"], ["docker"])
+        self.assertEqual(result["memory"]["title"], "Preferred Editor")
+        self.assertEqual(result["memory"]["updated"], created["updated"])
+
+    def test_both_none_raises_system_exit_without_side_effects(self):
+        created = self._create()
+
+        with self.assertRaises(SystemExit):
+            self.run_cmd(mem.cmd_update_metadata, memory_id=created["id"], tags=None, related=None)
+
+        fetched = self.markdown_store.read(created["id"])
+        self.assertEqual(fetched["tags"], [])
+
+    def test_unknown_memory_id_raises_system_exit(self):
+        with self.assertRaises(SystemExit):
+            self.run_cmd(
+                mem.cmd_update_metadata,
+                memory_id="global/does-not-exist",
+                tags=["docker"],
+                related=None,
+            )
+
+    def test_invalid_tag_raises_system_exit_without_writing(self):
+        created = self._create()
+
+        with self.assertRaises(SystemExit):
+            self.run_cmd(
+                mem.cmd_update_metadata, memory_id=created["id"], tags=["!!!"], related=None
+            )
+
+        fetched = self.markdown_store.read(created["id"])
+        self.assertEqual(fetched["tags"], [])
+
+    def test_does_not_create_a_session_or_observation(self):
+        created = self._create()
+
+        self.run_cmd(
+            mem.cmd_update_metadata, memory_id=created["id"], tags=["docker"], related=None
+        )
+
+        self.assertEqual(self.local_store.list_sessions(), [])
+
+    def test_nonexistent_related_id_is_accepted_and_reported_as_dangling(self):
+        created = self._create()
+
+        result = self.run_cmd(
+            mem.cmd_update_metadata,
+            memory_id=created["id"],
+            tags=None,
+            related=["global/does-not-exist"],
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["dangling_related"], ["global/does-not-exist"])
+        self.assertEqual(result["memory"]["related"], ["global/does-not-exist"])
+
+    def test_valid_related_id_reports_empty_dangling_related(self):
+        other = self.markdown_store.upsert_from_observation(
+            type="profile",
+            entity_type="user",
+            entity_id="default",
+            key="other_key",
+            scope="global",
+            project_id=None,
+            summary="other",
+        )
+        created = self._create()
+
+        result = self.run_cmd(
+            mem.cmd_update_metadata, memory_id=created["id"], tags=None, related=[other["id"]]
+        )
+
+        self.assertEqual(result["dangling_related"], [])
+
+    def test_tags_only_update_reports_empty_dangling_related(self):
+        created = self._create()
+
+        result = self.run_cmd(
+            mem.cmd_update_metadata, memory_id=created["id"], tags=["docker"], related=None
+        )
+
+        self.assertEqual(result["dangling_related"], [])
 
 
 if __name__ == "__main__":
