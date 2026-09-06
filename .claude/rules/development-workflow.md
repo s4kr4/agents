@@ -48,7 +48,7 @@ description: 開発ワークフロー。コード実装を伴うタスクで必�
 
 #### Phase 3a: RED（失敗テスト作成）
 
-**エージェント**: `@web-api-tester` / `@web-ui-tester`
+**エージェント**: `@tester`（ドメイン固有スキルは委譲時に指定）
 
 - 完了条件から振る舞いを抽出
 - テストファイル作成（プロダクションコードは書かない）
@@ -58,7 +58,7 @@ description: 開発ワークフロー。コード実装を伴うタスクで必�
 
 #### Phase 3b: GREEN / REFACTOR（実装）
 
-**エージェント**: `@web-api-implementer` / `@web-ui-implementer`
+**エージェント**: `@implementer`（ドメイン固有スキルは委譲時に指定）
 
 - failing テストを最小実装で通す
 - リファクタリング
@@ -66,12 +66,12 @@ description: 開発ワークフロー。コード実装を伴うタスクで必�
 
 → 実装完了後、Phase 3.5 または Phase 4 へ
 
-> **例外（CLI / スクリプト）**: `@general-implementer` 担当の場合は TDD 分離を適用せず、単独で実装する。
+> **エージェントはドメインではなく役割で分ける**: tester / implementer の分離は CLI・スクリプト・ライブラリなど non-web の実装にも適用する。同一エージェントがテストと実装を書くと、fixture が「実装が想定する入力」に寄り、正規形から外れた入力（手編集ファイル・CRLF・タイムゾーン差）が検証されないまま通過した実例がある。分離は「検証の独立性」に属し、モデルの能力と無関係に価値が残る（`~/.agents/CLAUDE.md` の「フェーズの分類」参照）。ドメイン差はエージェントではなく委譲時に指定するスキルで吸収する（経緯は `plans/2026-09-06-role-based-agents.md`）。
 
 ### Phase 3.5: UI Verification
 
 **エージェント**: `@web-ui-verifier`
-**条件**: `@web-ui-implementer` を使用した場合
+**条件**: UI 実装を行った場合
 
 - ブラウザでの視覚的確認
 - インタラクション検証
@@ -127,7 +127,7 @@ description: 開発ワークフロー。コード実装を伴うタスクで必�
 | UI表示バグ修正                         | ✅    | ❌    | ✅    | ✅（Before/After） | ✅    | 5        |
 | 軽微（スタイル・文言・コメントのみ）   | ❌    | ❌    | 直接実装（テストなし） | ✅（目視のみ） | ❌    | 6        |
 
-> **（※）UI検証**: `@web-ui-implementer` を使用した場合は `@web-ui-verifier` を使用する。CLI・スクリプト・バックエンドのみの変更の場合はスキップする。
+> **（※）UI検証**: UI 実装を行った場合は `@web-ui-verifier` を使用する。CLI・スクリプト・バックエンドのみの変更の場合はスキップする。
 
 > **例外: 使い捨てスクリプト**
 >
@@ -150,9 +150,9 @@ description: 開発ワークフロー。コード実装を伴うタスクで必�
    ↓
 @code-planner で実装計画策定・承認
    ↓
-@web-api-tester または @web-ui-tester で failing テスト作成（RED）
+@tester で failing テスト作成（RED）
    ↓
-@web-api-implementer または @web-ui-implementer で実装（GREEN/REFACTOR）
+@implementer で実装（GREEN/REFACTOR）
    ↓
 @web-ui-verifier でUI検証
    ↓
@@ -166,9 +166,9 @@ description: 開発ワークフロー。コード実装を伴うタスクで必�
 ```
 @code-planner で計画策定（調査も含む）
    ↓
-@web-api-tester または @web-ui-tester で failing テスト作成（RED）
+@tester で failing テスト作成（RED）
    ↓
-@web-api-implementer または @web-ui-implementer で実装（GREEN/REFACTOR）
+@implementer で実装（GREEN/REFACTOR）
    ↓
 @web-ui-verifier でUI検証
    ↓
@@ -180,9 +180,9 @@ description: 開発ワークフロー。コード実装を伴うタスクで必�
 ```
 @code-investigator でコードベース調査
    ↓
-@web-api-tester または @web-ui-tester で failing テスト作成（RED）
+@tester で failing テスト作成（RED）
    ↓
-@web-api-implementer または @web-ui-implementer で実装（GREEN/REFACTOR）
+@implementer で実装（GREEN/REFACTOR）
    ↓
 @code-safety-inspector で検証
 ```
@@ -192,10 +192,14 @@ description: 開発ワークフロー。コード実装を伴うタスクで必�
 ```
 @code-investigator でコードベース調査
    ↓
-@general-implementer で実装
+@tester で failing テスト作成（RED。委譲時に /py-implement 等のドメインスキルを指定）
+   ↓
+@implementer で実装（GREEN/REFACTOR）
    ↓
 @code-safety-inspector で検証
 ```
+
+> 「複雑」「中程度」分類では `@code-planner` の計画フェーズを挟む（フェーズ選択ガイド参照）。
 
 #### パターン5: UI表示バグ修正
 
@@ -204,9 +208,9 @@ description: 開発ワークフロー。コード実装を伴うタスクで必�
    ↓
 @web-ui-verifier で現状のバグを再現・スクリーンショット取得（Before）
    ↓
-@web-ui-tester で failing テスト作成（RED）
+@tester で failing テスト作成（RED。/ui-test を指定）
    ↓
-@web-ui-implementer で修正（GREEN/REFACTOR）
+@implementer で修正（GREEN/REFACTOR）
    ↓
 @web-ui-verifier で修正確認（After）・Before との比較
    ↓
@@ -218,7 +222,7 @@ description: 開発ワークフロー。コード実装を伴うタスクで必�
 #### パターン6: 軽微変更（スタイル・文言・コメントのみ）
 
 ```
-@web-ui-implementer（UI）または @general-implementer（非UI）で直接修正（テスト作成なし）
+@implementer で直接修正（テスト作成なし）
    ↓
 @web-ui-verifier で目視確認（スクリーンショット）
 ```
@@ -240,13 +244,13 @@ description: 開発ワークフロー。コード実装を伴うタスクで必�
    ↓ 不合格
 実装エージェントへフィードバックレポート提出
    ↓
-@web-api-implementer / @web-ui-implementer / @general-implementer: 修正実装
+@implementer: 修正実装
    ↓
 @code-safety-inspector: 検査（イテレーション2）
    ↓ 不合格
 実装エージェントへフィードバックレポート提出
    ↓
-@web-api-implementer / @web-ui-implementer / @general-implementer: 修正実装
+@implementer: 修正実装
    ↓
 @code-safety-inspector: 検査（イテレーション3）
    ↓
@@ -287,12 +291,9 @@ implementer がテスト自体の不整合（要件誤解・セットアップ�
 - **エージェント詳細定義**:
   - `~/.claude/agents/code-investigator.md`
   - `~/.claude/agents/code-planner.md`
-  - `~/.claude/agents/web-api-tester.md`
-  - `~/.claude/agents/web-ui-tester.md`
-  - `~/.claude/agents/web-api-implementer.md`
-  - `~/.claude/agents/web-ui-implementer.md`
+  - `~/.claude/agents/tester.md`
+  - `~/.claude/agents/implementer.md`
   - `~/.claude/agents/web-ui-verifier.md`
-  - `~/.claude/agents/general-implementer.md`
   - `~/.claude/agents/code-safety-inspector.md`
 - **グローバル開発ガイドライン**:
   - `~/.claude/CLAUDE.md`

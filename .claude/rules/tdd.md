@@ -34,7 +34,7 @@ TDD は**テストで検証できる振る舞いを変更・追加する実装**
 
 以下のいずれかに該当する場合、tester / implementer 分離ワークフロー（`development-workflow.md` の Phase 3a/3b、`/tdd` スキルのオーケストレーション手順）の一部として動作しており、この例外が適用される:
 
-- 自分が tester / implementer 専任のエージェント定義（`@web-api-tester` / `@web-ui-tester` / `@web-api-implementer` / `@web-ui-implementer`）で起動されている
+- 自分が tester / implementer 専任のエージェント定義（`@tester` / `@implementer`）で起動されている
 - 委譲プロンプトに RED / GREEN フェーズの明示がある
 
 例外の内容:

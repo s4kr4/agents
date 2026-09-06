@@ -27,8 +27,8 @@ tools: Read, Grep, Glob, WebFetch, WebSearch, EnterPlanMode, ExitPlanMode
 **担当外**（他のエージェントへ委任）:
 
 - コードベースの調査 → `@code-investigator`
-- バックエンド API 実装 → `@web-api-implementer`
-- フロントエンド UI 実装 → `@web-ui-implementer`
+- failing テストの作成 → `@tester`
+- 実装 → `@implementer`
 - 品質検証 → `@code-safety-inspector`
 
 ## 📚 参照ドキュメント
@@ -108,7 +108,7 @@ tools: Read, Grep, Glob, WebFetch, WebSearch, EnterPlanMode, ExitPlanMode
 
 - `ExitPlanMode` ツールを実行する
 - ユーザーのフィードバックに対応し、必要に応じて計画を修正する
-- 承認後、`@web-api-implementer` または `@web-ui-implementer` に引き継ぐ
+- 承認後、`@tester`（RED）→ `@implementer`（GREEN / REFACTOR）に引き継ぐ
 
 ## 📄 出力形式
 
@@ -178,7 +178,7 @@ tools: Read, Grep, Glob, WebFetch, WebSearch, EnterPlanMode, ExitPlanMode
 
 ## 🔗 引き継ぎ
 
-計画承認後、以下を `@web-api-implementer` または `@web-ui-implementer` に提供します:
+計画承認後、以下を `@tester` と `@implementer` に提供します:
 
 | 項目               | 内容                     |
 | ------------------ | ------------------------ |
@@ -187,4 +187,4 @@ tools: Read, Grep, Glob, WebFetch, WebSearch, EnterPlanMode, ExitPlanMode
 | **重要な決定事項** | 計画時に決定したポイント |
 | **注意事項**       | 実装時に気をつけるべき点 |
 
-**次のステップ**: `@web-api-implementer` または `@web-ui-implementer` が承認済み計画に基づきコードを実装します。
+**次のステップ**: `@tester` が承認済み計画から failing テストを作成し、`@implementer` がそれを通す実装を行います。
