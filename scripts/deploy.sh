@@ -49,3 +49,11 @@ else
 fi
 
 echo "==> Codex skills deployed!"
+
+echo "==> Deploying local bin..."
+
+mkdir -p "$HOME/.local/bin"
+
+link_file "$AGENTSPATH/scripts/claude-rate-status" "$HOME/.local/bin/claude-rate-status"
+
+echo "==> Local bin deployed!"
