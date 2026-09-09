@@ -111,3 +111,33 @@ fi
 printf "%s\n%s\n" \
     "${section_user} ${sep} ${section_project} ${sep} ${section_model}" \
     "${section_tokens} ${sep} ${section_rate}${section_fb}"
+
+# レートリミット残量をキャッシュへ書き出す
+# herdr のタブバー右端から実行される scripts/claude-rate-status が読み取る。
+# statusLine が落ちると Claude Code の画面が壊れるため、失敗はすべて握り潰し、
+# 標準出力（上記の 2 行）・標準エラーを汚さない。
+# rate_limits が入力に無い場合は何も書かず、既存のキャッシュをそのまま残す。
+if [ -n "$five_hour_pct" ] && [ -n "$seven_day_pct" ]; then
+    cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/claude-statusline"
+    cache_path="$cache_dir/rate-limits"
+    # 一時ファイルは同一ディレクトリに置く（別ファイルシステム経由だと
+    # mv が rename(2) にならず、読み手に部分状態が見えうるため）
+    tmp_path="$cache_path.tmp.$$"
+    # token_display / rate_display は printf 用に % をエスケープ済みのため
+    # 再利用せず、生の整数から組み立てる
+    printf -v updated_at '%(%s)T' -1
+    # リダイレクト自体の失敗もシェルが stderr へ書くため、グループごと捨てる
+    if {
+        mkdir -p "$cache_dir" \
+            && printf 'five_hour_remaining=%s\nseven_day_remaining=%s\nupdated_at=%s\n' \
+                "$five_hour_rem" "$seven_day_rem" "$updated_at" > "$tmp_path"
+    } 2>/dev/null; then
+        # cache_path がディレクトリだと mv はその配下へ移動して成功してしまい、
+        # 一時ファイルが蓄積するため事前に弾く
+        if [ -d "$cache_path" ] || ! mv -f "$tmp_path" "$cache_path" 2>/dev/null; then
+            rm -f "$tmp_path" 2>/dev/null || true
+        fi
+    else
+        rm -f "$tmp_path" 2>/dev/null || true
+    fi
+fi

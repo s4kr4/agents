@@ -1,0 +1,73 @@
+#!/bin/bash
+
+# herdr のタブバー右端へ Claude のレートリミット残量を出力する
+#
+# claude-statusline が書き出したキャッシュを読み、"⚡5h:79% 7d:94%" の
+# 1 行を出力する。キャッシュが古い場合は末尾に "*" を付けて出力する
+# （放置中は残量が回復するため、古い値は過小評価であって実害がない）。
+# 欠損・破損時は何も出力しない。
+#
+# herdr サーバーから定期実行されるため、以下を満たすこと:
+#   - 読み出し専用（ディレクトリもファイルも作らない）
+#   - bash 組み込みのみに依存（最小 PATH で動く）
+#   - source / eval を使わない（キャッシュ内容をコードとして解釈しない）
+#   - 常に exit 0
+
+# 数値判定と桁数計算をロケール非依存にする。en_US.UTF-8 等では case の
+# [!0-9] が照合順序で解決されて全角数字を数値と誤認し、${#var} も
+# バイト数ではなく文字数を返すため、C ロケールに固定して決定的に評価する。
+LC_ALL=C
+export LC_ALL
+
+max_age_seconds=900
+value_max_digits=3
+epoch_max_digits=18
+
+# is_uint <value> <max-digits>
+is_uint() {
+    case "$1" in
+        '' | *[!0-9]*) return 1 ;;
+        # 先頭ゼロは後段の $(( )) が 8 進数として解釈し算術エラーになるため弾く
+        0?*) return 1 ;;
+    esac
+    [ "${#1}" -le "$2" ]
+}
+
+# キャッシュのパス解決。herdr サーバー側に XDG_CACHE_HOME が無い環境差を
+# 吸収するため、$HOME/.cache へフォールバックする。
+cache_path=""
+for candidate in \
+    "${XDG_CACHE_HOME:-${HOME:-}/.cache}/claude-statusline/rate-limits" \
+    "${HOME:-}/.cache/claude-statusline/rate-limits"; do
+    if [ -f "$candidate" ] && [ -r "$candidate" ]; then
+        cache_path="$candidate"
+        break
+    fi
+done
+[ -n "$cache_path" ] || exit 0
+
+five_hour=""
+seven_day=""
+updated_at=""
+
+while IFS='=' read -r key value || [ -n "$key" ]; do
+    case "$key" in
+        five_hour_remaining) five_hour="$value" ;;
+        seven_day_remaining) seven_day="$value" ;;
+        updated_at) updated_at="$value" ;;
+    esac
+done < "$cache_path"
+
+is_uint "$five_hour" "$value_max_digits" || exit 0
+is_uint "$seven_day" "$value_max_digits" || exit 0
+is_uint "$updated_at" "$epoch_max_digits" || exit 0
+[ "$five_hour" -le 100 ] || exit 0
+[ "$seven_day" -le 100 ] || exit 0
+
+# 未来の updated_at（クロックスキュー）は fresh として扱う
+printf -v now '%(%s)T' -1
+stale_mark=""
+[ "$((now - updated_at))" -le "$max_age_seconds" ] || stale_mark="*"
+
+printf '⚡5h:%s%% 7d:%s%%%s\n' "$five_hour" "$seven_day" "$stale_mark"
+exit 0
