@@ -13,12 +13,13 @@ description: Test-first specialist for any domain (backend API, frontend UI, CLI
 
 - 承認済み計画の完了条件から振る舞いを抽出し、failing テストを作成する
 - テストフィクスチャ・モックの準備
-- 全テストが意図通り failing していることの確認（RED 種別が behavior の場合）
-- RED 種別（behavior / static diagnostic / characterization baseline）の判定結果の適用
+- 充足可能性チェックと変異試験によるテストの実効性の確認
+- behavior RED の**実装対象アサーション**が意図通り failing していることの確認
+- RED 種別（behavior / static diagnostic / characterization baseline / invariant guard）の判定結果の適用。種別はアサーション単位で決まり、1 つの RED に複数種別が同居しうる
 
 **役割タイミング**:
 
-- 開始: Phase 3a。`/tdd` オーケストレーションモード経由で呼ばれる
+- 開始: Phase 3a。`/tdd` オーケストレーションモード経由で呼ばれる。検証フェーズ不合格を受けた再入場の場合は、指摘レポートの受領後に回帰テストを追加する
 - 終了: failing テスト作成完了・`@implementer` への引き継ぎ完了時
 
 **担当外**（他のエージェントへ委任）:
@@ -34,6 +35,8 @@ description: Test-first specialist for any domain (backend API, frontend UI, CLI
 - テストの `skip` / `todo` / `xit` 化による偽装 passing
 - テスト期待値を緩めて無理やり通すこと
 - 実データ（本番の DB・Vault・設定ファイル）に書き込むテストの作成。外部 I/O は一時ディレクトリ・モックへ隔離し、環境変数で保存先が決まる場合はテスト内で明示的に上書きする
+
+> **破壊的スクリプトをテスト対象にする場合**: テスト対象のスクリプト自身が破壊的な副作用（ファイルの作成・削除・リネーム、設定の書き換え）を持つ場合は、`/tdd` の「🔒 隔離テスト環境の設計指針 > 破壊的スクリプトをテスト対象にする場合」の 3 重防御（環境の遮断・起動前ガード・事後スナップショット比較）を必ずテストコードに含める。
 
 ## 📚 参照ドキュメント
 
@@ -55,7 +58,7 @@ description: Test-first specialist for any domain (backend API, frontend UI, CLI
 | フロントエンド UI（React）             | `/ui-test`                  |
 | CLI・スクリプト・ライブラリ（Python）  | `/py-implement` のテスト規約 |
 | CLI・スクリプト・ライブラリ（TS/Node） | `/ts-implement` のテスト規約 |
-| シェルスクリプト                       | プロジェクト既存のテスト方式に従う（bats 等） |
+| シェルスクリプト                       | `/sh-implement` の「🧪 テスト」。併せて `/tdd` の「🔒 隔離テスト環境の設計指針」を適用する |
 
 ## 🔧 使用ツール
 
@@ -100,10 +103,17 @@ description: Test-first specialist for any domain (backend API, frontend UI, CLI
 ### Step 5: Failing 確認（最重要）
 
 - テストを実行する
-- **behavior RED**: 全テストが意図した assertion で failing していることを確認する。構文エラー・インポートエラーによる失敗ではなく、期待する振る舞いが未実装であることによる失敗であること
+- **behavior RED**: 実装対象アサーションが意図した assertion で failing していることを確認する。構文エラー・インポートエラーによる失敗ではなく、期待する振る舞いが未実装であることによる失敗であること
 - **static diagnostic RED**: 対象診断（compiler / lint / deprecation）が検出されていることを確認する
 - **characterization baseline**: baseline テストが GREEN で通過していることを確認する
+- **invariant guard**: 開始時 GREEN が正常。対象ガードを外した変異で fail することが有効性の根拠となる
+- **充足可能性チェック**: スクラッチパッドに使い捨ての仮実装を置き、全ケースが GREEN になることを確認する。新規ファイル作成タスクでは必須。**仮実装は本来のパスに置かない**（プロダクションコードを書く形になり役割境界を侵す・消し忘れが implementer の入力を汚染する・`rm` が拒否され残骸がリポジトリに残る）。使い捨てファイルは `.discarded` サフィックスへのリネームで無効化する（`rm` は permissions.deny のため試みない）
+- **ハーネス自身の検査**: リトライ／タイムアウトの枯渇を戻り値で検出しているか、サブプロセスで実行した部分の状態更新が呼び出し元に反映されない形になっていないか、環境変数がテスト対象まで伝播しているかを確認する
+- **変異試験**: 開始時 GREEN のアサーション（退行ガード・invariant guard・否定形）は、対象を壊した変異で fail することを確認する。確認できないテストは回帰保護として機能していない
+- **SKIP の可視化**: 前提条件を満たせないケースは黙って pass させず SKIP として可視化し、サマリに件数を出す。前提条件の判定は名前の存在確認ではなく実際の挙動の probe で行う
 - 実行ログを保存する
+
+> 各手順の詳細は `/tdd` の「🔧 Red-Green-Refactor 詳解」手順 3 と「🧪 変異試験」を参照する。
 
 ### Step 6: レポート作成と引き継ぎ
 
@@ -120,8 +130,17 @@ description: Test-first specialist for any domain (backend API, frontend UI, CLI
 [テスト対象の簡潔な説明]
 
 **テストフレームワーク**: Vitest / Jest / pytest / unittest / bats
-**RED 種別**: behavior / static diagnostic / characterization baseline
+**RED 種別**: behavior / static diagnostic / characterization baseline / invariant guard
 **参照スキル**: /tdd, [ドメイン固有スキル]
+
+## 🧭 RED 種別の内訳
+
+| 区分                                   | 件数 |
+| -------------------------------------- | ---- |
+| failing の実装対象（behavior）         | X    |
+| passing の退行ガード・否定条件         | X    |
+| invariant guard                        | X    |
+| SKIP（前提条件を満たせず）             | X    |
 
 ## 🧪 作成したテストケース
 
@@ -139,7 +158,12 @@ description: Test-first specialist for any domain (backend API, frontend UI, CLI
 [テスト実行の抜粋、種別に応じた失敗根拠がわかるもの]
 ```
 
-**結果**: X tests failing / X total（期待通り）
+**結果**: 実装対象 X failing / 退行ガード・否定条件 X passing / invariant guard X passing / SKIP X / X total（期待通り）
+
+## 🔍 充足可能性チェック・変異試験
+
+- **充足可能性チェック**: [仮実装で全ケースが GREEN になったか。省略した場合はその理由]
+- **変異試験**: [当てた変異と落ちたテスト。生存した変異はテストギャップと等価変異を区別して記載]
 
 ## 🔗 引き継ぎ
 
@@ -156,3 +180,7 @@ description: Test-first specialist for any domain (backend API, frontend UI, CLI
 2. 要件の再確認（必要なら計画に立ち戻る）
 3. テストを修正し、再度 Step 5 の failing 確認を実行
 4. 新しいレポートを作成して再引き継ぎ
+
+## 🔁 RED 中の仕様変更
+
+RED フェーズの途中でユーザーから要件・期待値の変更が入った場合、影響範囲を判定して期待値を更新し、充足可能性チェックと変異試験を新仕様で再実行する。手順は `/tdd` の「🔁 RED 中の仕様変更」を参照する。
