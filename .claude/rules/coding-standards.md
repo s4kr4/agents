@@ -72,6 +72,9 @@ counter++;
 - 定数: UPPER_SNAKE_CASE (`MAX_RETRY_COUNT`)
 - プライベート: `_` プレフィックス (`_internal_method`)
 
+**シェルスクリプト（bash）**:
+- 命名を含む規約は `/sh-implement` を参照
+
 ## エラーハンドリング
 
 ### 基本原則
@@ -93,3 +96,4 @@ counter++;
 - TypeScript: `/ts-implement`（PATTERNS.md > エラーハンドリング）
 - Python: `/py-implement`（PATTERNS.md > エラーハンドリング）
 - React: `/react-implement`（ErrorBoundary）
+- シェルスクリプト: `/sh-implement`（エラー処理の方針）
