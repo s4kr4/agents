@@ -58,6 +58,9 @@ repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 sync_script="$repo_root/scripts/sync-claude-codex-skills.sh"
 
+# 不変条件: ここで値を返すパス族は、collect_state のフラグ設定 case の部分集合で
+# あること。新しいパス族を足すときは collect_state 側も必ず併せて更新する。
+# 崩したときに何が起きるかは sync_ran の宣言部を参照。
 map_counterpart() {
     local path="$1"
     local rel skill rest
@@ -115,6 +118,8 @@ collect_state() {
         [[ -n "$path" ]] || continue
         staged_set["$path"]=1
 
+        # map_counterpart が値を返すパス族をすべて覆うこと。
+        # 覆えていないパス族があると、issue はあるのにどちらのフラグも立たない。
         case "$path" in
             .claude/skills/*|.claude/agents/*)
                 has_claude_changes=1
@@ -157,9 +162,21 @@ if [[ "${#issues[@]}" -eq 0 ]]; then
     exit 0
 fi
 
+# collect_state を再実行すると has_claude_changes / has_codex_changes には
+# このスクリプト自身の git add の結果が混ざり、片側同期の後でも「両側ステージ」に
+# 見えてしまう。同期を起動したかどうかは再集計で壊れない別のフラグで覚えておく。
+#
+# 失敗時の else は「利用者が最初から両側をステージした」場合にだけ到達する。これは
+# map_counterpart が値を返すパス族が collect_state のフラグ設定 case の部分集合で
+# あることに依存している。この不変条件が崩れると、どちらのフラグも立たないまま
+# else へ落ち、同期をスキップした覚えのない状況で「両側ステージだから曖昧」という
+# 誤った説明が出る。
+sync_ran=0
+
 if [[ "$auto_sync" -eq 1 && "$has_claude_changes" -eq 1 && "$has_codex_changes" -eq 0 ]]; then
     echo "Auto-syncing skills from Claude to Codex..."
     "$sync_script" --from claude
+    sync_ran=1
     for path in "${!issues[@]}"; do
         counterpart="$(map_counterpart "$path" || true)"
         [[ -n "$counterpart" && -e "$counterpart" ]] && git add "$counterpart"
@@ -168,6 +185,7 @@ if [[ "$auto_sync" -eq 1 && "$has_claude_changes" -eq 1 && "$has_codex_changes" 
 elif [[ "$auto_sync" -eq 1 && "$has_codex_changes" -eq 1 && "$has_claude_changes" -eq 0 ]]; then
     echo "Auto-syncing skills from Codex to Claude..."
     "$sync_script" --from codex
+    sync_ran=1
     for path in "${!issues[@]}"; do
         counterpart="$(map_counterpart "$path" || true)"
         [[ -n "$counterpart" && -e "$counterpart" ]] && git add "$counterpart"
@@ -183,11 +201,11 @@ echo "Skill/agent sync check failed."
 
 if [[ "$auto_sync" -eq 0 ]]; then
     echo "This run only inspected the staged files; nothing was written or staged."
-elif [[ "$has_claude_changes" -eq 1 && "$has_codex_changes" -eq 1 ]]; then
+elif [[ "$sync_ran" -eq 1 ]]; then
+    echo "Automatic sync ran, but staged files are still inconsistent."
+else
     echo "Both Claude and Codex skill/agent files are staged in the same commit."
     echo "Automatic sync is skipped because the source of truth is ambiguous."
-else
-    echo "Automatic sync ran, but staged files are still inconsistent."
 fi
 
 echo "Remaining paths that need manual attention:"

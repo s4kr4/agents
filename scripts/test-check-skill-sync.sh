@@ -19,7 +19,11 @@
 # スパイは引数を記録したうえで本物の同期スクリプトへ exec する（pass-through spy）。
 # 記録の書き込み先は一時リポジトリの外に置き、スパイ自身が作業ツリーを汚さないようにする。
 #
-# 対象パスは CHECK_SKILL_SYNC_TARGET で差し替えられる（充足可能性チェック・変異試験用）。
+# 対象の起動は timeout で包む。引数解析ループから shift が落ちると無限ループになり、
+# テストは失敗せずにハングする。退行が無限待ちではなく失敗として現れるようにする。
+#
+# 対象パスは CHECK_SKILL_SYNC_TARGET で、待ち時間は CHECK_SKILL_SYNC_TIMEOUT で
+# 差し替えられる（充足可能性チェック・変異試験用）。
 
 set -uo pipefail
 
@@ -200,6 +204,33 @@ done
 [ -f "$target" ] || fatal "対象スクリプトが見つからない: $target"
 [ -f "$real_sync_src" ] || fatal "同期スクリプトが見つからない: $real_sync_src"
 
+# env は隔離の要なので PATH 解決に頼らず絶対パスで押さえる。
+env_bin="$(command -v env)"
+[ -n "$env_bin" ] || fatal "env が見つからない"
+
+# 対象の起動 1 回につき timeout が 1 プロセス増えるが、ハングを失敗として
+# 可視化できる価値のほうが大きい。待ち時間は正常系が余裕をもって終わる長さにする。
+run_timeout="${CHECK_SKILL_SYNC_TIMEOUT:-60}"
+timeout_exit_code=124
+
+# 暴走した対象が出力を溜め込んでディスクを埋めないよう、上限を掛ける。
+# 正常系の出力は数 KB なので、上限に触れること自体が異常の兆候になる。
+# bash の ulimit -f は 1 KiB ブロックなので 8192 で約 8 MiB。
+run_file_limit_blocks=8192
+file_limit_exit_code=$((128 + $(kill -l SIGXFSZ 2>/dev/null || echo 25)))
+timeout_bin="$(command -v timeout || true)"
+timeout_usable=0
+if [ -n "$timeout_bin" ]; then
+    # 名前の存在確認では足りない。実際に打ち切らせて 124 が返ることまで確かめる。
+    "$timeout_bin" 1 sleep 5 >/dev/null 2>&1
+    if [ "$?" = "$timeout_exit_code" ]; then
+        timeout_usable=1
+    fi
+fi
+if [ "$timeout_usable" != "1" ]; then
+    printf 'NOTE: timeout が使えないため、対象のハングを検出できません\n' >&2
+fi
+
 mkdir -p "$home_stub" "$tmp_stub"
 : > "$home_stub/.gitconfig"
 mkdir -p "$work/nohooks"
@@ -225,7 +256,8 @@ repo_seq=0
 spy_log=""
 
 write_agent() {
-    cat > "$1" <<'AGENTEOF'
+    local path="$1" body="${2:-サンプルエージェントの本文。}"
+    cat > "$path" <<AGENTEOF
 ---
 name: sample-agent
 description: sample agent for tests
@@ -233,7 +265,7 @@ description: sample agent for tests
 
 # Sample Agent
 
-サンプルエージェントの本文。
+$body
 AGENTEOF
 }
 
@@ -257,11 +289,19 @@ SKILLEOF
 # エージェントの変換はフロントマターを name / description だけで再生成するため、
 # その 2 行だけを持つ入力なら往復して同一になる。これにより「初期状態は整合」を
 # 実測なしに保証でき、無関係な差分がテストへ混入しない。
+#
+# 第 1 引数でスパイの種別を選ぶ。
+#   passthrough（既定）: 引数を記録して本物の同期スクリプトへ exec する
+#   partial            : 引数を記録し、カウンターパートを片方だけ作る。
+#                        「同期は走ったが不整合が残る」状況を決定的に再現する
 new_repo() {
+    local spy_mode="${1:-passthrough}"
+
     repo_seq=$((repo_seq + 1))
     repo="$work/repo$repo_seq"
     spy_log="$work/spy$repo_seq.log"
     extra_env=()
+    expect_timeout=0
 
     fatal_unless_path_isolated "$repo" "一時リポジトリ"
 
@@ -279,11 +319,43 @@ new_repo() {
     printf 'stub readme\n' > "$repo/README.md"
 
     : > "$spy_log"
-    cat > "$repo/scripts/sync-claude-codex-skills.sh" <<SPYEOF
+    case "$spy_mode" in
+        passthrough)
+            cat > "$repo/scripts/sync-claude-codex-skills.sh" <<SPYEOF
 #!/bin/sh
 printf 'invoke:%s\n' "\$*" >> "$spy_log"
 exec "$real_sync" "\$@"
 SPYEOF
+            ;;
+        partial)
+            # 対象は同期スクリプトを起動する前に repo root へ cd するので、
+            # ここでは相対パスで作業してよい。
+            # 受け取った --from に応じて、その方向のカウンターパートを片方だけ作る。
+            # 想定外の方向で呼ばれたら黙って成功させず、stderr に出して失敗する。
+            cat > "$repo/scripts/sync-claude-codex-skills.sh" <<SPYEOF
+#!/bin/sh
+printf 'invoke:%s\n' "\$*" >> "$spy_log"
+echo "partial sync done"
+case "\$*" in
+    *'--from claude'*)
+        mkdir -p .codex/skills/newskill
+        cp .claude/skills/newskill/SKILL.md .codex/skills/newskill/SKILL.md
+        ;;
+    *'--from codex'*)
+        mkdir -p .claude/skills/codexnew
+        cp .codex/skills/codexnew/SKILL.md .claude/skills/codexnew/SKILL.md
+        ;;
+    *)
+        echo "partial spy: unexpected arguments: \$*" >&2
+        exit 1
+        ;;
+esac
+SPYEOF
+            ;;
+        *)
+            fatal "不明なスパイの種別: $spy_mode"
+            ;;
+    esac
     chmod +x "$repo/scripts/sync-claude-codex-skills.sh"
 
     # 対象の 89 行目は HEAD が無いと非ゼロで返り 2>/dev/null される。
@@ -304,6 +376,26 @@ stage_claude_only_inconsistent() {
     git_t add .claude/skills/newskill/SKILL.md || fatal "add に失敗"
 }
 
+# Claude 側だけをステージし、カウンターパートが 2 件とも存在しない状態を作る。
+# partial スパイは newskill だけを同期するため、同期後も secondskill の不整合が残る。
+stage_claude_only_two_inconsistencies() {
+    mkdir -p "$repo/.claude/skills/newskill" "$repo/.claude/skills/secondskill"
+    write_skill "$repo/.claude/skills/newskill/SKILL.md" "新規スキルの本文。"
+    write_skill "$repo/.claude/skills/secondskill/SKILL.md" "2 つ目の新規スキルの本文。"
+    git_t add .claude/skills/newskill/SKILL.md .claude/skills/secondskill/SKILL.md \
+        || fatal "add に失敗"
+}
+
+# Codex 側だけを 2 つステージし、カウンターパートが 2 件とも存在しない状態を作る。
+# partial スパイは codexnew だけを同期するため、同期後も codexsecond の不整合が残る。
+stage_codex_only_two_inconsistencies() {
+    mkdir -p "$repo/.codex/skills/codexnew" "$repo/.codex/skills/codexsecond"
+    write_skill "$repo/.codex/skills/codexnew/SKILL.md" "codex 側の新規スキルの本文。"
+    write_skill "$repo/.codex/skills/codexsecond/SKILL.md" "codex 側 2 つ目の本文。"
+    git_t add .codex/skills/codexnew/SKILL.md .codex/skills/codexsecond/SKILL.md \
+        || fatal "add に失敗"
+}
+
 # Codex 側だけをステージし、カウンターパートの作業ツリーが HEAD からずれた状態を作る。
 # 対象は git diff --quiet HEAD -- <counterpart> で作業ツリーを見るため、
 # カウンターパートが HEAD と同一なら不整合として扱われない。
@@ -311,6 +403,23 @@ stage_codex_only_inconsistent() {
     write_skill "$repo/.codex/skills/alpha/SKILL.md" "codex 側で編集した本文。"
     git_t add .codex/skills/alpha/SKILL.md || fatal "add に失敗"
     write_skill "$repo/.claude/skills/alpha/SKILL.md" "claude 側の未ステージ編集。"
+}
+
+# エージェントの Codex 側だけをステージし、カウンターパートの作業ツリーを
+# HEAD からずらす。map_counterpart の .codex/skills/* → .claude/agents/*.md の
+# 解決を通す唯一のフィクスチャ。
+stage_agent_codex_side_inconsistent() {
+    write_agent "$repo/.codex/skills/sample-agent/SKILL.md" "codex 側で編集した本文。"
+    git_t add .codex/skills/sample-agent/SKILL.md || fatal "add に失敗"
+    write_agent "$repo/.claude/agents/sample-agent.md" "claude 側の未ステージ編集。"
+}
+
+# エージェントの Claude 側だけをステージし、カウンターパートの作業ツリーを
+# HEAD からずらす。map_counterpart の .claude/agents/*.md の分岐を通す。
+stage_agent_claude_side_inconsistent() {
+    write_agent "$repo/.claude/agents/sample-agent.md" "claude 側で編集した本文。"
+    git_t add .claude/agents/sample-agent.md || fatal "add に失敗"
+    write_agent "$repo/.codex/skills/sample-agent/SKILL.md" "codex 側の未ステージ編集。"
 }
 
 # 両側をステージしつつ、双方に未解決の不整合がある状態を作る。
@@ -367,6 +476,15 @@ capture_before() {
     [ -n "$ix_before" ] || fatal "インデックスのスナップショットが空"
 }
 
+# 網羅性を測るときの母数の定義: 「実対象を起動し、かつこのガードを持つブロック」。
+# 無条件に書き込む変異を当てて母数のブロックが残らず発火すれば、書き込みを検出すべき
+# ブロックにガードの付け漏れが無いと言える。
+#
+# 数えるときは assert_rejected_argument のようなヘルパーの内側に隠れたガードを必ず
+# 展開すること。展開を忘れると引数拒否系のブロックを数え落とし、母数と発火数が食い違う。
+# 逆に「何らかの隔離ガードを持つ」という広い基準で数えると、起動回数しか見ないブロックが
+# 紛れ込んで母数が膨らむ。--auto-sync で書き込みが正当に起きるケース群はこのガードを
+# 持たないので、いずれの数え方でも母数には入らない。
 assert_worktree_unchanged() {
     assert_eq "$1: 作業ツリーが実行前後で一致" "$wt_before" "$(snapshot_worktree)"
 }
@@ -397,15 +515,28 @@ run_out=""
 run_err=""
 run_all=""
 run_rc=0
+run_timed_out=0
+expect_timeout=0
 extra_env=()
 
 run_check() {
+    local -a launcher=()
+
     fatal_unless_isolated
     : > "$out_file"
     : > "$err_file"
+    run_timed_out=0
+
+    if [ "$timeout_usable" = "1" ]; then
+        launcher=("$timeout_bin" "$run_timeout")
+    fi
+
     (
         cd "$repo" || exit 127
-        env -i \
+        # サイズ超過で対象が SIGXFSZ で落ちたときにコアダンプを残さない。
+        ulimit -c 0 2>/dev/null || true
+        ulimit -f "$run_file_limit_blocks" 2>/dev/null || true
+        ${launcher[@]+"${launcher[@]}"} "$env_bin" -i \
             PATH="$check_path" \
             HOME="$home_stub" \
             TMPDIR="$tmp_stub" \
@@ -419,6 +550,19 @@ run_check() {
     run_err="$(cat "$err_file")"
     run_all="$run_out
 $run_err"
+
+    if [ "$timeout_usable" = "1" ] && [ "$run_rc" = "$timeout_exit_code" ]; then
+        run_timed_out=1
+        # ハングは「まだ終わっていない」ではなく失敗として扱う。ここで
+        # 記録しないと、後続のアサーションの内容次第では素通りしうる。
+        if [ "$expect_timeout" != "1" ]; then
+            fail "対象が ${run_timeout} 秒以内に終了しなかった" "args: $*"
+        fi
+    fi
+
+    if [ "$run_rc" = "$file_limit_exit_code" ]; then
+        fail "対象の出力がサイズ上限（${run_file_limit_blocks} KiB）を超えた" "args: $*"
+    fi
 }
 
 # 引数を受け付けない前提のケースをまとめて検証する。
@@ -520,6 +664,45 @@ assert_index_unchanged "既定モード・Codex 側"
 assert_contains "失敗ヘッダが stdout に出る" "Skill/agent sync check failed." "$run_out"
 assert_not_contains "自動同期を実行した旨の説明が出ない" "Automatic sync ran" "$run_all"
 
+start_test "既定モードは Claude 側エージェント定義の不整合を Codex のスキルへ写して報告する"
+# エージェント定義はスキルとは別の分岐で写される（拡張子を落として
+# .codex/skills/<name>/SKILL.md へ移す）。この分岐が死んでも issue が 0 件に
+# なるだけで他のケースは全て緑のままなので、専用のケースでしか守れない。
+new_repo
+stage_agent_claude_side_inconsistent
+capture_before
+run_check
+assert_eq "exit 1" "1" "$run_rc"
+assert_no_sync "既定モード・エージェント Claude 側"
+assert_worktree_unchanged "既定モード・エージェント Claude 側"
+assert_index_unchanged "既定モード・エージェント Claude 側"
+assert_contains "失敗ヘッダが stdout に出る" "Skill/agent sync check failed." "$run_out"
+assert_contains "不整合パスが報告される" ".claude/agents/sample-agent.md" "$run_all"
+assert_contains "解消手順が Codex 側のスキルを指す" \
+    "update and stage .codex/skills/sample-agent/SKILL.md" "$run_all"
+
+start_test "既定モードは Codex 側エージェント定義の不整合を Claude の agents へ写して報告する"
+# .codex/skills/<name>/ の写し先は既定では .claude/skills/<name>/ だが、同名の
+# エージェント定義が実在する場合だけ .claude/agents/<name>.md になる。この代替枝が
+# 落ちても exit 1 のままなので、終了コードでは検出できない。誤った写し先を
+# 名指しで否定することだけが検出器になる。
+new_repo
+stage_agent_codex_side_inconsistent
+capture_before
+run_check
+assert_eq "exit 1" "1" "$run_rc"
+assert_no_sync "既定モード・エージェント Codex 側"
+assert_worktree_unchanged "既定モード・エージェント Codex 側"
+assert_index_unchanged "既定モード・エージェント Codex 側"
+assert_contains "失敗ヘッダが stdout に出る" "Skill/agent sync check failed." "$run_out"
+assert_contains "不整合パスが報告される" ".codex/skills/sample-agent/SKILL.md" "$run_all"
+assert_contains "解消手順が既存のエージェント定義の更新を指す" \
+    "update and stage .claude/agents/sample-agent.md" "$run_all"
+assert_not_contains "存在しないスキル側のパスを案内しない" \
+    ".claude/skills/sample-agent" "$run_all"
+assert_not_contains "既存ファイルの更新なのに新規作成を指示しない" \
+    "create and stage" "$run_all"
+
 start_test "既定モードは両側ステージの不整合でも第 3 の説明を出して exit 1 する"
 new_repo
 stage_both_sides_inconsistent
@@ -613,6 +796,59 @@ assert_eq "exit 0" "0" "$run_rc"
 assert_eq "同期スクリプトが 1 度だけ起動される" "1" "$(spy_invocations)"
 assert_true "カウンターパートが作られる" \
     "$([ -f "$repo/.codex/skills/newskill/SKILL.md" ] && echo 1 || echo 0)"
+
+start_test "Claude→Codex の同期で解消しない場合、同期を実行したことと矛盾しない説明を出す"
+# 同期スクリプトがカウンターパートを片方しか作らないと、対象は作れた側だけを
+# git add する。その結果 .codex 側もステージ済みになり、再集計で「両側ステージ」
+# と判定される。ステージしたのは利用者ではなく対象自身なので、
+# 「曖昧だから同期をスキップした」という説明は事実に反する。
+new_repo partial
+stage_claude_only_two_inconsistencies
+run_check --auto-sync
+assert_eq "exit 1" "1" "$run_rc"
+assert_eq "同期スクリプトが起動されている" "1" "$(spy_invocations)"
+assert_contains "--from claude で起動される" "invoke:--from claude" "$(cat "$spy_log")"
+assert_contains "同期が実際に走ったことが出力から読み取れる" "partial sync done" "$run_all"
+assert_contains "解消しなかったパスが報告される" \
+    ".claude/skills/secondskill/SKILL.md" "$run_all"
+assert_not_contains "同期をスキップしたという説明が出ない" \
+    "Automatic sync is skipped" "$run_all"
+assert_not_contains "両側ステージを理由にした説明が出ない" \
+    "Both Claude and Codex skill/agent files are staged in the same commit." "$run_all"
+assert_contains "同期を実行したが解消しなかったことが読み取れる" \
+    "Automatic sync ran" "$run_all"
+
+start_test "Codex→Claude の同期で解消しない場合、同期を実行したことと矛盾しない説明を出す"
+# 上の鏡像。同期を起動したという記録は方向ごとに別の代入で立つため、
+# 片方だけを検証すると反対方向の退行を取り逃す。
+new_repo partial
+stage_codex_only_two_inconsistencies
+run_check --auto-sync
+assert_eq "exit 1" "1" "$run_rc"
+assert_eq "同期スクリプトが起動されている" "1" "$(spy_invocations)"
+assert_contains "--from codex で起動される" "invoke:--from codex" "$(cat "$spy_log")"
+assert_contains "同期が実際に走ったことが出力から読み取れる" "partial sync done" "$run_all"
+assert_contains "解消しなかったパスが報告される" \
+    ".codex/skills/codexsecond/SKILL.md" "$run_all"
+assert_not_contains "同期をスキップしたという説明が出ない" \
+    "Automatic sync is skipped" "$run_all"
+assert_not_contains "両側ステージを理由にした説明が出ない" \
+    "Both Claude and Codex skill/agent files are staged in the same commit." "$run_all"
+assert_contains "同期を実行したが解消しなかったことが読み取れる" \
+    "Automatic sync ran" "$run_all"
+
+start_test "--auto-sync で最初から両側ステージだった場合は従来どおり曖昧さを説明する"
+# 上の分岐を足しても、利用者が本当に両側をステージした場合の説明は変えない。
+new_repo
+stage_both_sides_inconsistent
+run_check --auto-sync
+assert_eq "exit 1" "1" "$run_rc"
+assert_no_sync "--auto-sync・利用者が両側ステージ"
+assert_contains "両側ステージであることを説明する" \
+    "Both Claude and Codex skill/agent files are staged in the same commit." "$run_all"
+assert_contains "曖昧さを理由に同期をスキップしたと説明する" \
+    "Automatic sync is skipped because the source of truth is ambiguous." "$run_all"
+assert_not_contains "同期を実行したという説明は出ない" "Automatic sync ran" "$run_all"
 
 # ---------------------------------------------------------------------------
 # usage と不明な引数
@@ -759,6 +995,45 @@ assert_eq "exit 1" "1" "$run_rc"
 assert_no_sync "SKIP=空"
 assert_worktree_unchanged "SKIP=空"
 assert_index_unchanged "SKIP=空"
+
+# ---------------------------------------------------------------------------
+# ハーネス自身の検査
+# ---------------------------------------------------------------------------
+
+start_test "対象がハングした場合にテストが失敗として現れる"
+# 引数解析ループから shift が落ちると無限ループになる。タイムアウトが無いと
+# テストは失敗せずに待ち続けるため、打ち切りが機能することを直接確かめる。
+if [ "$timeout_usable" = "1" ]; then
+    hang_stub="$work/hang-forever.sh"
+    cat > "$hang_stub" <<'HANGEOF'
+#!/usr/bin/env bash
+# shift を落とした引数解析ループと同じ無限ループ。
+while :; do :; done
+HANGEOF
+    chmod +x "$hang_stub"
+
+    new_repo
+    stage_claude_only_inconsistent
+    capture_before
+
+    saved_target="$target"
+    saved_timeout="$run_timeout"
+    target="$hang_stub"
+    run_timeout=2
+    expect_timeout=1
+    run_check --auto-sync
+    target="$saved_target"
+    run_timeout="$saved_timeout"
+    expect_timeout=0
+
+    assert_eq "ハングがタイムアウトとして検出される" "1" "$run_timed_out"
+    assert_eq "終了コードが timeout のもの（$timeout_exit_code）になる" \
+        "$timeout_exit_code" "$run_rc"
+    assert_no_sync "ハング時"
+    assert_worktree_unchanged "ハング時"
+else
+    skip "timeout が使える状態でないため、ハング検出のケースを実行できなかった"
+fi
 
 # ---------------------------------------------------------------------------
 # 事後スナップショット比較（実リポジトリの不変性）
