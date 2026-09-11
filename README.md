@@ -16,6 +16,12 @@ Claude Code のグローバル設定を管理するリポジトリです。
 │   ├── agents/            # カスタムサブエージェント定義
 │   ├── skills/            # カスタムスキル定義
 │   └── rules/             # 開発ルール・ガイドライン
+├── .codex/                # Codex 側の設定（.claude と相互に同期）
+│   ├── AGENTS.md          # Codex 向け開発ガイドライン
+│   ├── config.toml        # Codex 設定
+│   ├── skills/            # スキル定義（Claude 側のミラー）
+│   └── rules/             # 開発ルール・ガイドライン
+├── .githooks/             # リポジトリ共有の Git フック（既定では無効）
 ├── memory/                # 共有メモリ関連のCLI、hook、設計資料
 ├── scripts/
 │   └── deploy.sh          # デプロイスクリプト
@@ -37,6 +43,23 @@ make deploy
 ```bash
 make deploy  # Claude Code 設定をデプロイ（シンボリックリンク作成）
 make update  # 最新を pull してデプロイ
+```
+
+## Git フック
+
+`.githooks/pre-commit` は、`.claude/` と `.codex/` のスキル・エージェントが同期しているかをコミット前に検査します。**既定では有効になっていません。** 有効化すると、このリポジトリのコミット時にフックが実行されるようになります。
+
+```bash
+make hooks-install    # フックを有効化（core.hooksPath=.githooks）
+make hooks-uninstall  # フックを無効化
+```
+
+有効化した状態で片側だけをステージしてコミットすると、フックが不足している側を自動で同期してステージに追加します（`--auto-sync` を渡しているため）。
+
+1 回だけ検査を迂回したい場合は、環境変数を付けて実行します。
+
+```bash
+SKIP_SKILL_SYNC_CHECK=1 git commit -m "..."
 ```
 
 ## 共有メモリ
