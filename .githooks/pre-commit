@@ -2,4 +2,6 @@
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
-"$repo_root/scripts/check-skill-sync.sh"
+# フックからは同期と自動ステージまで任せる。既定モードは検査のみなので、
+# コミット前に片側を同期させたい従来の挙動には --auto-sync が要る。
+"$repo_root/scripts/check-skill-sync.sh" --auto-sync
