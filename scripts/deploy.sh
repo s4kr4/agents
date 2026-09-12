@@ -55,5 +55,7 @@ echo "==> Deploying local bin..."
 mkdir -p "$HOME/.local/bin"
 
 link_file "$AGENTSPATH/scripts/claude-rate-status" "$HOME/.local/bin/claude-rate-status"
+link_file "$AGENTSPATH/scripts/codex-rate-status" "$HOME/.local/bin/codex-rate-status"
+link_file "$AGENTSPATH/scripts/agent-rate-status" "$HOME/.local/bin/agent-rate-status"
 
 echo "==> Local bin deployed!"

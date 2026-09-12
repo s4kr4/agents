@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+"""Codex のローカル記録から herdr 向けの残量を表示する（Python 3.11+）。
+
+読み出し専用。欠損・破損・読み取り失敗時は無出力で正常終了する。
+認証情報や通信には依存せず、記録から 900 秒を超える場合は * を付ける。
+"""
+
+import json
+import math
+import os
+from collections.abc import Iterator
+from datetime import UTC, datetime
+from pathlib import Path
+
+CHUNK_BYTES = 64 * 1024
+MAX_AGE_SECONDS = 900
+FIVE_HOUR_MINUTES = 300
+SEVEN_DAY_MINUTES = 10080
+
+
+def reverse_lines(path: Path) -> Iterator[bytes]:
+    """巨大なセッションも、末尾から必要な範囲だけ読み取る。"""
+    with path.open("rb") as stream:
+        position = stream.seek(0, os.SEEK_END)
+        pending = b""
+        while position:
+            size = min(position, CHUNK_BYTES)
+            position -= size
+            stream.seek(position)
+            lines = (stream.read(size) + pending).split(b"\n")
+            pending = lines[0]
+            yield from reversed(lines[1:])
+        if pending:
+            yield pending
+
+
+def parse_limits(line: bytes) -> tuple[datetime, int, int] | None:
+    """有効な Codex の 5 時間・7 日の両枠と記録日時を取り出す。"""
+    # 無関係な長い応答本文を JSON 化しない。キーが Unicode escape で
+    # 書かれている場合も取りこぼさないよう、バックスラッシュ付きは解析する。
+    if b'"rate_limits"' not in line and b"\\" not in line:
+        return None
+    try:
+        event = json.loads(line)
+    except (ValueError, UnicodeError, RecursionError):
+        return None
+    if not isinstance(event, dict) or event.get("type") != "event_msg":
+        return None
+    payload = event.get("payload")
+    if not isinstance(payload, dict) or payload.get("type") != "token_count":
+        return None
+    limits = payload.get("rate_limits")
+    if not isinstance(limits, dict) or limits.get("limit_id") not in (None, "codex"):
+        return None
+    timestamp = event.get("timestamp")
+    if not isinstance(timestamp, str):
+        return None
+    try:
+        recorded_at = datetime.fromisoformat(timestamp)
+    except ValueError:
+        return None
+    if recorded_at.tzinfo is None:
+        return None
+
+    remaining = {}
+    for name in ("primary", "secondary"):
+        window = limits.get(name)
+        if not isinstance(window, dict):
+            return None
+        minutes = window.get("window_minutes")
+        used = window.get("used_percent")
+        if (
+            not isinstance(minutes, (int, float))
+            or isinstance(minutes, bool)
+            or minutes not in (FIVE_HOUR_MINUTES, SEVEN_DAY_MINUTES)
+            or not isinstance(used, (int, float))
+            or isinstance(used, bool)
+            or not 0 <= used <= 100
+        ):
+            return None
+        # round() は .5 を偶数丸めするため、使用率の四捨五入を明示する。
+        remaining[minutes] = 100 - math.floor(used + 0.5)
+    if FIVE_HOUR_MINUTES not in remaining or SEVEN_DAY_MINUTES not in remaining:
+        return None
+    return recorded_at, remaining[FIVE_HOUR_MINUTES], remaining[SEVEN_DAY_MINUTES]
+
+
+def main() -> None:
+    """各セッションの最終有効記録から最新の残量を一行で表示する。"""
+    codex_home = os.environ.get("CODEX_HOME")
+    if not codex_home:
+        home = os.environ.get("HOME")
+        if not home:
+            return
+        codex_home = str(Path(home) / ".codex")
+    latest = None
+    try:
+        for path in (Path(codex_home) / "sessions").glob("*/*/*/*.jsonl"):
+            try:
+                for line in reverse_lines(path):
+                    candidate = parse_limits(line)
+                    if candidate is not None:
+                        if latest is None or candidate[0] > latest[0]:
+                            latest = candidate
+                        # セッション内では Codex の追記順を信頼する。全行走査を
+                        # 避け、ファイル間では mtime でなく記録日時を比較する。
+                        break
+            except OSError:
+                continue
+    except OSError:
+        return
+    if latest is None:
+        return
+    recorded_at, five_hour, seven_day = latest
+    age = (datetime.now(UTC) - recorded_at).total_seconds()
+    # 未来の記録は Claude 版と同様に fresh として扱う。
+    stale_mark = "*" if age > MAX_AGE_SECONDS else ""
+    print(f"5h:{five_hour}% 7d:{seven_day}%{stale_mark}")
+
+
+if __name__ == "__main__":
+    main()

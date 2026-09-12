@@ -45,6 +45,23 @@ make deploy  # Claude Code 設定をデプロイ（シンボリックリンク�
 make update  # 最新を pull してデプロイ
 ```
 
+## Codex の残量表示
+
+`scripts/codex-rate-status` は、Claude 版と同じ形式で 5 時間・7 日の残量を表示します。Python 3.11 以降の標準ライブラリのみを使用し、実行時の `PATH` に `python3` が必要です。
+
+```bash
+./scripts/codex-rate-status
+# 5h:79% 7d:94%
+```
+
+`make deploy` で個別の残量コマンドと herdr 専用の `agent-rate-status` を `~/.local/bin/` にシンボリックリンクとして配置します。個別の `claude-rate-status`・`codex-rate-status` は残量のみを出力します。
+
+herdr の表示用コマンドには `agent-rate-status` を指定します。`⚡ Claude 5h:79% 7d:94% | Codex 5h:50% 7d:75%` のように、左にアイコンを 1 つだけ付けて集約します。herdr サーバーの `PATH` 上で `claude`・`codex` の存在を確認し、対応する残量コマンドが成功して値を返した項目だけを表示します。CLI がない場合やデータが空の場合はラベルごと非表示になり、両方とも表示できなければ無出力です。CLI 自体は起動しません。`PATH` には各 CLI と `~/.local/bin` が必要です。
+
+情報源は `${CODEX_HOME:-$HOME/.codex}/sessions/*/*/*/*.jsonl` の `event_msg` → `token_count` → `rate_limits` です。各セッションの最後に追記された有効な Codex の記録を候補とし、候補間で記録日時が最新のものを表示します。使用率を四捨五入して 100 から引いた値が残量です。両枠が揃った有効な記録がない場合は無出力で正常終了し、記録から 15 分を超えた値には末尾に `*` が付きます。
+
+ローカル記録の形式に依存するため、Codex の更新で追従が必要になる場合があります。通信やファイル書き込みは行わず、表示は最後に記録された値です。同じ保存先でアカウントを切り替えた場合は区別できません。
+
 ## Git フック
 
 `.githooks/pre-commit` は、`.claude/` と `.codex/` のスキル・エージェントが同期しているかをコミット前に検査します。**既定では有効になっていません。** 有効化すると、このリポジトリのコミット時にフックが実行されるようになります。

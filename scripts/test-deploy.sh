@@ -162,6 +162,20 @@ echo deploy-test-rate-status-ok
 STUBEOF
 chmod +x "$rate_status_src"
 
+codex_rate_status_src="$agents_stub/scripts/codex-rate-status"
+cat > "$codex_rate_status_src" <<'STUBEOF'
+#!/bin/sh
+echo deploy-test-codex-rate-status-ok
+STUBEOF
+chmod +x "$codex_rate_status_src"
+
+agent_rate_status_src="$agents_stub/scripts/agent-rate-status"
+cat > "$agent_rate_status_src" <<'STUBEOF'
+#!/bin/sh
+echo deploy-test-agent-rate-status-ok
+STUBEOF
+chmod +x "$agent_rate_status_src"
+
 rate_status_rel=".local/bin/claude-rate-status"
 
 # ---------------------------------------------------------------------------
@@ -287,8 +301,8 @@ run_deploy
 run_deploy
 assert_eq "3 回目 exit 0" "0" "$run_rc"
 assert_rate_status_link "3 回目"
-assert_eq ".local/bin の中身は claude-rate-status のみ" \
-    "claude-rate-status" \
+assert_eq ".local/bin の中身は個別と集約の残量コマンド" \
+    "agent-rate-status claude-rate-status codex-rate-status" \
     "$(cd "$home/.local/bin" && find . -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | tr '\n' ' ' | sed 's/ $//')"
 
 # --- 条件4: リンク経由で実行できる
@@ -309,6 +323,24 @@ resolved_rc=$?
 assert_eq "ベース名起動が exit 0" "0" "$resolved_rc"
 assert_eq "ベース名起動でスタブの出力が得られる" "deploy-test-rate-status-ok" "$resolved_out"
 assert_eq "ベース名起動の stderr は空" "" "$(cat "$work/resolve-err.txt")"
+
+start_test "codex-rate-status を配置し PATH から起動できる"
+assert_symlink_to "Codex のリンク" "$home/.local/bin/codex-rate-status" "$codex_rate_status_src"
+assert_stdout_mentions "Codex の配置対象が報告される" "$home/.local/bin/codex-rate-status"
+resolved_out="$(env -i PATH="$home/.local/bin" "$bash_bin" -c 'codex-rate-status' 2>"$work/codex-resolve-err.txt")"
+resolved_rc=$?
+assert_eq "Codex のベース名起動が exit 0" "0" "$resolved_rc"
+assert_eq "Codex のスタブ出力が得られる" "deploy-test-codex-rate-status-ok" "$resolved_out"
+assert_eq "Codex の stderr は空" "" "$(cat "$work/codex-resolve-err.txt")"
+
+start_test "agent-rate-status を配置し PATH から起動できる"
+assert_symlink_to "集約コマンドのリンク" "$home/.local/bin/agent-rate-status" "$agent_rate_status_src"
+assert_stdout_mentions "集約コマンドの配置が報告される" "$home/.local/bin/agent-rate-status"
+resolved_out="$(env -i PATH="$home/.local/bin" "$bash_bin" -c 'agent-rate-status' 2>"$work/agent-resolve-err.txt")"
+resolved_rc=$?
+assert_eq "集約コマンドの起動が exit 0" "0" "$resolved_rc"
+assert_eq "集約コマンドのスタブ出力が得られる" "deploy-test-agent-rate-status-ok" "$resolved_out"
+assert_eq "集約コマンドの stderr は空" "" "$(cat "$work/agent-resolve-err.txt")"
 
 start_test "リポジトリ内の scripts/claude-rate-status に実行権がある"
 # リンクを張っても実体に実行権が無ければ PATH 解決経路は成立しない。

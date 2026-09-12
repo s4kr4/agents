@@ -1,0 +1,24 @@
+#!/bin/bash
+
+# herdr 用に、利用可能な CLI の残量をラベル付きで集約する。
+# CLI 自体は起動せず、PATH 上の存在だけを確認する。
+# reader が失敗・無出力の場合はその項目を隠し、常に exit 0 とする。
+
+output=""
+for agent in claude codex; do
+    command -v "$agent" >/dev/null 2>&1 || continue
+    value="$("$agent-rate-status" 2>/dev/null)" || continue
+    [[ -n "$value" ]] || continue
+
+    case "$agent" in
+        claude) label="Claude" ;;
+        codex) label="Codex" ;;
+    esac
+    if [[ -n "$output" ]]; then
+        output+=" | "
+    fi
+    output+="$label $value"
+done
+
+[[ -z "$output" ]] || printf '⚡ %s\n' "$output"
+exit 0

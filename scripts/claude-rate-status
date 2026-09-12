@@ -2,7 +2,7 @@
 
 # herdr のタブバー右端へ Claude のレートリミット残量を出力する
 #
-# claude-statusline が書き出したキャッシュを読み、"⚡5h:79% 7d:94%" の
+# claude-statusline が書き出したキャッシュを読み、"5h:79% 7d:94%" の
 # 1 行を出力する。キャッシュが古い場合は末尾に "*" を付けて出力する
 # （放置中は残量が回復するため、古い値は過小評価であって実害がない）。
 # 欠損・破損時は何も出力しない。
@@ -69,5 +69,5 @@ printf -v now '%(%s)T' -1
 stale_mark=""
 [ "$((now - updated_at))" -le "$max_age_seconds" ] || stale_mark="*"
 
-printf '⚡5h:%s%% 7d:%s%%%s\n' "$five_hour" "$seven_day" "$stale_mark"
+printf '5h:%s%% 7d:%s%%%s\n' "$five_hour" "$seven_day" "$stale_mark"
 exit 0

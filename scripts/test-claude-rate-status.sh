@@ -142,25 +142,25 @@ UTILEOF
 # ---------------------------------------------------------------------------
 
 exp_fresh="$work/expected-fresh.out"
-printf '⚡5h:79%% 7d:94%%\n' > "$exp_fresh"
+printf '5h:79%% 7d:94%%\n' > "$exp_fresh"
 
 # stale は末尾に ASCII の '*' を付けて出し続ける。放置中は消費が進まず
 # ローリングウィンドウから古い消費が外れるだけなので、古い残量は
 # 過小評価（保守的な下限）であり出し続けても実害がない。
 exp_stale="$work/expected-stale.out"
-printf '⚡5h:79%% 7d:94%%*\n' > "$exp_stale"
+printf '5h:79%% 7d:94%%*\n' > "$exp_stale"
 
 exp_edge="$work/expected-edge.out"
-printf '⚡5h:0%% 7d:100%%\n' > "$exp_edge"
+printf '5h:0%% 7d:100%%\n' > "$exp_edge"
 
 exp_edge_stale="$work/expected-edge-stale.out"
-printf '⚡5h:0%% 7d:100%%*\n' > "$exp_edge_stale"
+printf '5h:0%% 7d:100%%*\n' > "$exp_edge_stale"
 
 exp_zero="$work/expected-zero.out"
-printf '⚡5h:0%% 7d:0%%\n' > "$exp_zero"
+printf '5h:0%% 7d:0%%\n' > "$exp_zero"
 
 exp_zero_stale="$work/expected-zero-stale.out"
-printf '⚡5h:0%% 7d:0%%*\n' > "$exp_zero_stale"
+printf '5h:0%% 7d:0%%*\n' > "$exp_zero_stale"
 
 fullwidth_zero="$(printf '\xef\xbc\x90')"    # U+FF10 FULLWIDTH DIGIT ZERO
 arabic_indic_five="$(printf '\xd9\xa5')"     # U+0665 ARABIC-INDIC DIGIT FIVE
@@ -325,7 +325,7 @@ EOF
 # ---------------------------------------------------------------------------
 
 # --- 条件1: fresh なキャッシュから 1 行のサマリを出力する
-start_test "fresh なキャッシュから ⚡5h:79% 7d:94% を 1 行で出力する"
+start_test "fresh なキャッシュから 5h:79% 7d:94% を 1 行で出力する"
 new_cache_root
 run_with_age "$root" 0
 assert_stdout_bytes "標準出力が期待バイト列（末尾改行 1 個）と一致" "$exp_fresh"
@@ -709,7 +709,7 @@ assert_eq "両方先頭ゼロでも exit 0" "0" "$run_rc"
 assert_eq "両方先頭ゼロでも stderr は空" "" "$run_err"
 
 # --- 条件14: 単独の 0 は先頭ゼロではないため受理し続ける（退行防止）
-start_test "残量が両方 0 の fresh キャッシュは ⚡5h:0% 7d:0% を出力する"
+start_test "残量が両方 0 の fresh キャッシュは 5h:0% 7d:0% を出力する"
 new_cache_root
 printf -v now '%(%s)T' -1
 printf 'five_hour_remaining=0\nseven_day_remaining=0\nupdated_at=%s\n' "$now" > "$(cache_file "$root")"
