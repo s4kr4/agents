@@ -98,3 +98,37 @@ Codex のセッション用シェルラッパー、初期化・移行・キュ�
 make memory-init  # Vault/local ディレクトリの初期化
 make memory-demo  # 最小デモ
 ```
+
+## 作業方針の自動注入
+
+共有メモリの `philosophy` タグに保存した記憶を、SessionStart フック（`memory/hook-session-start-philosophy.sh`）がセッション開始時・`/clear` 後・コンテキスト圧縮後に自動注入します。
+
+対応環境は Linux・WSL・macOS です。ネイティブ Windows には配布していません（配布は bash 版の `deploy.sh` のみで、PowerShell 版の導入スクリプトは MCP のみを扱います）。実行には bash・jq・GNU coreutils の `timeout`（macOS では Homebrew の `gtimeout`）が必要です。macOS では事前に `brew install jq coreutils` を実行してください。
+
+Claude Code は `.claude/settings.json` の `SessionStart` に登録済みで、`make deploy` でそのままデプロイされます。
+
+Codex はリポジトリで管理せず、`~/.codex/hooks.json` の `hooks.SessionStart` 配列に、次のエントリを手動で追記します。
+
+```json
+{
+  "matcher": "^(startup|clear|compact)$",
+  "hooks": [
+    {
+      "type": "command",
+      "command": "/home/<ユーザー名>/.agents/memory/hook-session-start-philosophy.sh",
+      "timeout": 10,
+      "statusMessage": "作業方針を読み込み中..."
+    }
+  ]
+}
+```
+
+追記後は Codex の `/hooks` で信頼を承認してください。定義を変更した場合は再承認が必要です。このリポジトリに `.codex/hooks.json` を置くと、プロジェクト層としても読み込まれ二重注入になるため置きません。
+
+注入される各行には出所を確認できるよう記憶の id を `[id]` の形式で併記します（例: `- 小さな変更を優先する [global/philosophy-minimal-change]`）。
+
+行や id の偽装を防ぐため、注入前に summary の改行と ASCII の制御文字（U+0000〜U+001F、U+007F）を空白に置き換えて1行に整形します。id に `[`・`]`・空白・制御文字を含む記憶、および summary が空または空白のみの記憶は注入対象から除外し、省略件数に数えます。取得した応答が期待する型（`memories` が配列で、各要素の `id`・`summary` が文字列）を満たさない場合は、注意文を注入します。
+
+取得と本文の組み立ては、どちらも `LLM_MEMORY_HOOK_TIMEOUT`（1〜8 の整数、既定5秒）の時間制限の内側で行います。範囲外・非整数の値は既定にフォールバックします。本文の組み立ては2,000字の上限で頭打ちになるため、記憶の件数が増えても時間は伸びません。Claude Code 側の hook timeout（10秒）より必ず短くしてあり、外側のタイムアウトで打ち切られて処理が孤児化するのを防ぎます。
+
+起動時に stdout・stderr へ出力する `BASH_ENV` 等のシェル設定があると、注入する JSON が壊れます。フックを使う端末ではそうした設定を避けてください。

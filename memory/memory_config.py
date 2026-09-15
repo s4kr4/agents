@@ -106,8 +106,11 @@ def resolve_paths(
     resolved = {}
     fallback = vault is None and "LLM_MEMORY_VAULT" not in os.environ and "vault" not in config
     if require_vault and fallback:
+        # Shared by the CLI (--require-vault) and the MCP server, which has no
+        # --vault flag of its own -- only mention the two ways both callers
+        # can supply a vault.
         raise MemoryConfigError(
-            "MCP requires an explicit vault in LLM_MEMORY_VAULT or memory config"
+            "an explicit vault is required: set LLM_MEMORY_VAULT, or the memory config's vault key"
         )
     for key, default in defaults.items():
         value = overrides[key]

@@ -91,6 +91,17 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "startup|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.agents/memory/hook-session-start-philosophy.sh",
+            "timeout": 10,
+            "statusMessage": "作業方針を読み込み中..."
+          }
+        ]
       }
     ],
     "Stop": [

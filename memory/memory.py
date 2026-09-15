@@ -1349,6 +1349,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Local directory for the pipeline layer (default: $LLM_MEMORY_LOCAL_DIR)",
     )
+    parser.add_argument(
+        "--require-vault",
+        action="store_true",
+        help=(
+            "Fail fast (exit 2) instead of silently falling back to the "
+            "module-local vault when no vault is configured"
+        ),
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     init_db = subparsers.add_parser("init-db", help="Initialize the vault/local directories")
@@ -1559,7 +1567,9 @@ def main() -> None:
     args.db = args.db.expanduser() if args.db else None
 
     try:
-        paths = resolve_paths(vault=args.vault, local_dir=args.local_dir)
+        paths = resolve_paths(
+            vault=args.vault, local_dir=args.local_dir, require_vault=args.require_vault
+        )
         if paths.used_fallback:
             print(
                 f"warning: LLM_MEMORY_VAULT is not set; falling back to {paths.vault} (not synced by Syncthing)",

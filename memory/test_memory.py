@@ -6,6 +6,11 @@ from __future__ import annotations
 import argparse
 import io
 import json
+import os
+import shutil
+import stat
+import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr
@@ -1605,6 +1610,207 @@ class TestCmdUpdateMetadata(CliTestBase):
         )
 
         self.assertEqual(result["dangling_related"], [])
+
+
+CLI_SOURCE_DIR = Path(__file__).resolve().parent
+CLI_REAL_DATA_DIRS = (CLI_SOURCE_DIR / "vault", CLI_SOURCE_DIR / "local")
+PHILOSOPHY_SEARCH_ARGS = ("search", "--scope", "global", "--tag", "philosophy")
+
+
+def _snapshot_tree(path: Path) -> list[tuple[str, int, int, int]] | None:
+    if not os.path.lexists(path):
+        return None
+    root_stat = path.lstat()
+    entries = [(".", stat.S_IFMT(root_stat.st_mode), root_stat.st_size, root_stat.st_mtime_ns)]
+    if path.is_dir() and not path.is_symlink():
+        for dirpath, dirnames, filenames in os.walk(path):
+            dirnames.sort()
+            for name in sorted([*dirnames, *filenames]):
+                entry = Path(dirpath) / name
+                entry_stat = entry.lstat()
+                entries.append(
+                    (
+                        entry.relative_to(path).as_posix(),
+                        stat.S_IFMT(entry_stat.st_mode),
+                        entry_stat.st_size,
+                        entry_stat.st_mtime_ns,
+                    )
+                )
+    return entries
+
+
+def _abort_if_unsafe_cli_tree(root: Path) -> None:
+    """Stop the whole run, not just one test, if the copied tree could overlap real data."""
+    temp_base = Path(tempfile.gettempdir()).resolve()
+    repo_root = CLI_SOURCE_DIR.parent
+    problems = []
+    if root == temp_base or not root.is_relative_to(temp_base):
+        problems.append(f"{root} is not inside {temp_base}")
+    if root.is_relative_to(repo_root) or repo_root.is_relative_to(root):
+        problems.append(f"{root} overlaps the repository {repo_root}")
+    if problems:
+        sys.stderr.write("aborting: unsafe test tree: " + "; ".join(problems) + "\n")
+        sys.stderr.flush()
+        os._exit(3)
+
+
+def _copy_cli_sources(dest_memory_dir: Path) -> None:
+    """Copy the modules of memory/ (never vault/, local/ or other data)."""
+    dest_memory_dir.mkdir(parents=True)
+    for source in sorted(CLI_SOURCE_DIR.glob("*.py")):
+        if not source.name.startswith("test_"):
+            shutil.copy2(source, dest_memory_dir / source.name)
+
+
+class TestRequireVaultOption(unittest.TestCase):
+    """Runs memory.py from a copied tree so that its module-local fallback Vault
+    is never the repository's own memory/vault."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(prefix="memory-require-vault-")
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name).resolve()
+        _abort_if_unsafe_cli_tree(self.root)
+        self.memory_dir = self.root / "repo" / "memory"
+        _copy_cli_sources(self.memory_dir)
+        self.fallback_vault = self.memory_dir / "vault"
+        self.vault = self.root / "vault"
+        self.local_dir = self.root / "local"
+        self.empty_config = self.root / "config" / "empty-config.toml"
+        (self.root / "home").mkdir()
+        self.empty_config.parent.mkdir()
+        self.empty_config.write_text("", encoding="utf-8")
+
+    def cli_env(self, **overrides: str | None) -> dict[str, str]:
+        env = {
+            "HOME": str(self.root / "home"),
+            "XDG_CONFIG_HOME": str(self.root / "xdg-config"),
+            "XDG_CACHE_HOME": str(self.root / "xdg-cache"),
+            "TMPDIR": str(self.root / "tmp"),
+            "PATH": "/usr/bin:/bin",
+            "LLM_MEMORY_VAULT": str(self.vault),
+            "LLM_MEMORY_LOCAL_DIR": str(self.local_dir),
+            "LLM_MEMORY_QUEUE_DIR": str(self.root / "queue"),
+            "LLM_MEMORY_CONFIG": str(self.empty_config),
+        }
+        for name, value in overrides.items():
+            if value is None:
+                env.pop(name, None)
+            else:
+                env[name] = value
+        return env
+
+    def run_cli(self, env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
+        before = {path: _snapshot_tree(path) for path in CLI_REAL_DATA_DIRS}
+        result = subprocess.run(
+            [sys.executable, str(self.memory_dir / "memory.py"), *args],
+            env=env,
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+        for path in CLI_REAL_DATA_DIRS:
+            self.assertTrue(_snapshot_tree(path) == before[path], f"{path} changed during the run")
+        return result
+
+    def seed_philosophy(self, vault: Path) -> str:
+        # The store API resolves its lock directory from XDG_CACHE_HOME/HOME.
+        with patch.dict(os.environ, self.cli_env(), clear=True):
+            record = MarkdownMemoryStore(vault).upsert_from_observation(
+                type="feedback",
+                entity_type="user",
+                entity_id="default",
+                key="philosophy-seed",
+                scope="global",
+                project_id=None,
+                summary="一つのことをうまくやる",
+                tags=["philosophy"],
+            )
+        return record["id"]
+
+    def assert_search_hits(self, result: subprocess.CompletedProcess[str], ids: list[str]):
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+        payload = json.loads(result.stdout)
+        self.assertEqual([memory["id"] for memory in payload["memories"]], ids)
+
+    def test_require_vault_exits_without_creating_stores_when_vault_is_unresolved(self):
+        variants = (
+            ("empty explicit config", self.cli_env(LLM_MEMORY_VAULT=None)),
+            ("no config file", self.cli_env(LLM_MEMORY_VAULT=None, LLM_MEMORY_CONFIG=None)),
+        )
+        for label, env in variants:
+            for command in (PHILOSOPHY_SEARCH_ARGS, ("init-db",)):
+                with self.subTest(config=label, command=command[0]):
+                    # Act
+                    result = self.run_cli(env, "--require-vault", *command)
+
+                    # Assert
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertEqual(result.stdout, "")
+                    self.assertNotIn("unrecognized arguments", result.stderr)
+                    self.assertIn("error", result.stderr)
+                    self.assertIn("LLM_MEMORY_VAULT", result.stderr)
+                    self.assertNotIn("falling back", result.stderr)
+                    self.assertFalse(self.fallback_vault.exists())
+                    self.assertFalse(self.local_dir.exists())
+
+    def test_require_vault_searches_when_vault_is_set_by_environment(self):
+        # Arrange
+        memory_id = self.seed_philosophy(self.vault)
+
+        # Act
+        result = self.run_cli(self.cli_env(), "--require-vault", *PHILOSOPHY_SEARCH_ARGS)
+
+        # Assert
+        self.assert_search_hits(result, [memory_id])
+        self.assertFalse(self.fallback_vault.exists())
+
+    def test_require_vault_searches_when_vault_is_set_in_config_file(self):
+        # Arrange
+        config_vault = self.root / "config-vault"
+        memory_id = self.seed_philosophy(config_vault)
+        config = self.root / "config" / "config.toml"
+        config.write_text(f"vault = {json.dumps(str(config_vault))}\n", encoding="utf-8")
+        env = self.cli_env(LLM_MEMORY_VAULT=None, LLM_MEMORY_CONFIG=str(config))
+
+        # Act
+        result = self.run_cli(env, "--require-vault", *PHILOSOPHY_SEARCH_ARGS)
+
+        # Assert
+        self.assert_search_hits(result, [memory_id])
+        self.assertFalse(self.fallback_vault.exists())
+
+    def test_require_vault_searches_when_vault_is_given_by_flag(self):
+        # Arrange
+        memory_id = self.seed_philosophy(self.vault)
+        env = self.cli_env(LLM_MEMORY_VAULT=None)
+
+        # Act
+        result = self.run_cli(
+            env, "--require-vault", "--vault", str(self.vault), *PHILOSOPHY_SEARCH_ARGS
+        )
+
+        # Assert
+        self.assert_search_hits(result, [memory_id])
+        self.assertFalse(self.fallback_vault.exists())
+
+    def test_without_require_vault_unresolved_vault_warns_and_falls_back(self):
+        # Act
+        result = self.run_cli(self.cli_env(LLM_MEMORY_VAULT=None), *PHILOSOPHY_SEARCH_ARGS)
+
+        # Assert
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            f"warning: LLM_MEMORY_VAULT is not set; falling back to {self.fallback_vault}",
+            result.stderr,
+        )
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["memories"], [])
+        self.assertTrue((self.fallback_vault / "memory").is_dir())
 
 
 if __name__ == "__main__":

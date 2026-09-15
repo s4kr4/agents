@@ -6,7 +6,7 @@
 
 ### Vault層（memories・安定記憶）
 
-- 保存先: 明示設定の Vault 配下の `memory/`（設定方法は下記。設定なしの従来 CLI のみ `~/.agents/memory/vault/` へフォールバック）
+- 保存先: 明示設定の Vault 配下の `memory/`（設定方法は下記。設定なしの従来 CLI のみ `~/.agents/memory/vault/` へフォールバック）。`memory.py` に `--require-vault` を付けるとこのフォールバックを行わず、Vault 未設定時はエラーで終了する。このエラーメッセージは MCP サーバーでも共通のため、CLI 専用の `--vault` フラグには触れず、`LLM_MEMORY_VAULT` と config.toml の設定を案内する
 - Syncthing 同期対象。Obsidian 等のノートアプリで人間が直接閲覧・編集できることを意図している
 - 1論理キー（`entity_type` + `entity_id` + `key` + `scope` + `project_id`）= 1 Markdown ファイル
 - 新規保存の `created` / `updated` は秒・UTC オフセット付きのローカル日時（例: `2026-09-06T14:30:00+09:00`）。更新時は `created` を維持し、本文または type が変わった場合だけ `updated` を更新する。既存の日付のみの値は読み取り可能で、不明な過去の時刻は補完しない。本文の変更履歴は従来どおり日付単位。タグ・関連のみの変更では `updated` を更新せず、変更履歴にも追記しない
@@ -82,6 +82,7 @@ Codex 側は `codex-memory-run.sh` 経由でセッション終了時に自動実
 | `run-python.sh` | PyYAML が import できる Python で引数をそのまま実行するラッパー。`memory.py` の唯一のサードパーティ依存が PyYAML であり、システムの `python3` に入っていない環境でも動くように、`LLM_MEMORY_PYTHON` → システム `python3` → `uv` → `mise x uv` の順で解決する |
 | `codex-memory-run.sh` / `codex-memory-start.sh` / `codex-memory-stop.sh` / `codex-memory-log.sh` | `codex` コマンドをラップし、セッション開始時に `start-session`、終了時（trap EXIT）に `end-session --extract --consolidate` を自動実行する |
 | `hook-stop-memory.sh` | Claude Code の Stop hook 用スクリプト。現状 `.claude/settings.json` に未配線で自動実行されない。Claude Code 側は `/shared-memory` スキル経由の手動判断による読み書きが基本 |
+| `hook-session-start-philosophy.sh` | Claude Code・Codex共通の SessionStart hook 用スクリプト。`search --scope global --tag philosophy` の全件を id 昇順で取得し、各行に記憶 id を `[id]` 形式で併記して `additionalContext` として注入する。取得・本文組み立てのいずれも `LLM_MEMORY_HOOK_TIMEOUT`（1〜8の整数、既定5秒）の内側で行い、本文組み立ては2,000字上限で頭打ちになるため件数に応じて時間は伸びない。注入前に summary の改行と ASCII の制御文字（U+0000〜U+001F、U+007F）を空白へ置換して1行化し、id に `[`・`]`・空白・制御文字を含む記憶と summary が空・空白のみの記憶は除外して省略件数に数える（行・id の偽装防止）。応答の型（`memories` が配列、`id`・`summary` が文字列）を満たさない場合や、Vault未設定、jq/timeout系コマンド不在、timeout超過などの失敗時は exit 0 のまま、手動取得を促す注意文を注入する。macOS では GNU `timeout` の代わりに `gtimeout` を使う |
 | `llm-shared-memory-design.md` | 設計ドキュメント。SQLite採用の経緯、後にファイルベースへ移行した理由の記録を含む |
 | `../scripts/memory-mcp-check.sh` | `check_mcp.py` を一時 Vault/local/queue/config に隔離して呼ぶ共通ヘルパー。`make memory-mcp-check` と `deploy-memory-mcp.sh` の両方から使われ、実 Vault/実 local を汚染しない |
 | `../scripts/deploy-memory-mcp.sh` / `../scripts/deploy-memory-mcp.ps1` | 各 OS の MCP クライアント登録エントリを生成する入口。uv 同期 → `memory-mcp-check.sh`（隔離済みハンドシェイク）→ `memory_mcp_config.py` の順に呼ぶ |
