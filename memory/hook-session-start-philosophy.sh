@@ -82,9 +82,13 @@ def strip_prefix($k; $s):
     elif ($s | startswith($u)) then $s[($u | length):]
     else $s end;
 # 改行・制御文字（U+0000-001F, U+007F）を 1 文字ずつ空白 1 個に置き換える。
+# U+0085・U+2028・U+2029 も行区切りとして解釈されうるため同様に扱う。
 # コードポイント単位（explode/implode）で処理し、連続する空白はまとめない。
 def replace_controls:
-  explode | map(if (. <= 31 or . == 127) then 32 else . end) | implode;
+  explode
+  | map(if (. <= 31 or . == 127 or . == 133 or . == 8232 or . == 8233)
+        then 32 else . end)
+  | implode;
 def truncate300(s):
   if (s | length) > 300 then (s[0:299] + "…") else s end;
 # id に "[" "]"・空白・制御文字が含まれると行や id を偽装できてしまうため、
