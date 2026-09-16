@@ -3,9 +3,21 @@ set -euo pipefail
 
 input=$(cat)
 
-repo_root="${HOME}/.agents"
-memory_cli="${repo_root}/memory/memory.py"
-run_python="${repo_root}/memory/run-python.sh"
+# 共有メモリ CLI の位置は MEMORY_MCP_PATH だけで決める。既定値もフォールバック
+# 探索も持たないのは、未設定の端末で意図しない clone を動かさないため。相対パスと
+# 未展開のチルダは呼び出し元の作業ディレクトリ次第で別物を指すので受け付けない。
+# Stop フックは停止をブロックしてはならないので、使えないときは何も言わず exit 0。
+memory_mcp_path="${MEMORY_MCP_PATH:-}"
+case "$memory_mcp_path" in
+  /*) ;;
+  *) exit 0 ;;
+esac
+memory_cli="${memory_mcp_path}/memory.py"
+run_python="${memory_mcp_path}/run-python.sh"
+if [ ! -d "$memory_mcp_path" ] || [ ! -f "$memory_cli" ] ||
+  [ ! -f "$run_python" ] || [ ! -x "$run_python" ]; then
+  exit 0
+fi
 
 session_id=$(printf '%s' "$input" | jq -r '.session_id // empty')
 cwd=$(printf '%s' "$input" | jq -r '.cwd // ""')

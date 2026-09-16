@@ -17,10 +17,6 @@ export LC_ALL=C
 # 書き込みをブロックしないために読み捨てる。
 cat >/dev/null
 
-script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-memory_cli="${script_dir}/memory.py"
-run_python="${script_dir}/run-python.sh"
-
 heading="## ユーザーの作業方針（共有メモリ philosophy、自動注入）"
 instruction="設計判断ではこの方針に照らして判断し、該当する項目を根拠として示すこと。プロジェクト固有の規約（AGENTS.md / CLAUDE.md 等）と衝突する場合はプロジェクト規約を優先する。"
 # emit_notice に直接埋め込むため事前にエスケープ済み。この文字列に含まれる
@@ -43,6 +39,22 @@ emit_notice() {
     "$notice_json_escaped"
   exit 0
 }
+
+# 共有メモリ CLI の位置は MEMORY_MCP_PATH だけで決める。既定値もフォールバック
+# 探索も持たないのは、未設定の端末で意図しない clone を動かさないため。相対パスと
+# 未展開のチルダは呼び出し元の作業ディレクトリ次第で別物を指すので受け付けない。
+# 使えない場合は CLI を動かさず注意文を返すため、emit_notice の定義より後に置く。
+memory_mcp_path="${MEMORY_MCP_PATH:-}"
+case "$memory_mcp_path" in
+  /*) ;;
+  *) emit_notice ;;
+esac
+memory_cli="${memory_mcp_path}/memory.py"
+run_python="${memory_mcp_path}/run-python.sh"
+if [ ! -d "$memory_mcp_path" ] || [ ! -f "$memory_cli" ] ||
+  [ ! -f "$run_python" ] || [ ! -x "$run_python" ]; then
+  emit_notice
+fi
 
 # command -v は jq を起動しない（存在確認だけ）ので、CLI 側のタイムアウト
 # 予算を消費しない。

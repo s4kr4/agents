@@ -7,10 +7,12 @@
 # 最後に settings.json のハッシュを実行前後で比較し、それを確かめる。
 #
 # 検証する内容:
-#   - 作業方針フック（memory/hook-session-start-philosophy.sh）が SessionStart に
-#     1 件だけ登録され、matcher / type / command / timeout / statusMessage が仕様どおり
+#   - 作業方針フック（このリポジトリの .claude/scripts/hook-session-start-philosophy.sh）が
+#     SessionStart に 1 件だけ登録され、matcher / type / command / timeout / statusMessage が仕様どおり
 #   - 既存の herdr エントリと、PreToolUse / PostToolUse / Stop の内容が変わらない
-#   - command が指すフック本体が、実行権限付きでリポジトリに実在する
+#   - command が指すフック本体が、このリポジトリに実行権限付きで実在する
+#   - settings.json のどこにも memory-mcp の clone のパスと MEMORY_MCP_PATH が現れない
+#     （CLI の位置はシェル環境から供給する決定のため）
 #   - リポジトリに .codex/hooks.json が無い（Codex がプロジェクト層として読むと、
 #     ユーザー層の定義と重複して注入されるため）
 #
@@ -30,8 +32,13 @@ repo_root="${SESSION_START_HOOKS_REPO_ROOT:-$script_dir/..}"
 
 # settings.json に書かれる文字列そのものと比較するため、~ は展開させない。
 # shellcheck disable=SC2088
-hook_command='~/.agents/memory/hook-session-start-philosophy.sh'
+hook_command='~/.agents/.claude/scripts/hook-session-start-philosophy.sh'
+hook_relative_path='.claude/scripts/hook-session-start-philosophy.sh'
 hook_matcher='startup|clear|compact'
+# settings.json に現れてはならない文字列。フック本体はこのリポジトリにあり、
+# 共有メモリ CLI の位置は MEMORY_MCP_PATH としてシェル環境から供給する。
+forbidden_in_settings='worktrees/github.com/s4kr4/memory-mcp
+MEMORY_MCP_PATH'
 
 herdr_entry='{
   "matcher": "*",
@@ -142,8 +149,8 @@ fatal() {
 [ -d "$repo_root" ] || fatal "リポジトリルートがディレクトリではない: $repo_root"
 repo_root="$(cd "$repo_root" && pwd -P)"
 settings="${SESSION_START_HOOKS_SETTINGS:-$repo_root/.claude/settings.json}"
-# command の "~/.agents/" は、このリポジトリがデプロイされる位置を指す。
-hook_file="$repo_root/${hook_command#\~/.agents/}"
+# command の "~/.agents/" はこのリポジトリを指す。
+hook_file="$repo_root/$hook_relative_path"
 
 # settings.json のバイト列。ファイルが無い場合も、比較が空文字列同士で
 # 素通りしないよう明示的な値を返す。
@@ -289,11 +296,26 @@ fi
 # フック本体と Codex 側の構成
 # ---------------------------------------------------------------------------
 
-start_test "command が指すフック本体が実行権限付きで実在する"
+start_test "command が指すフック本体がリポジトリに実行権限付きで実在する"
 assert_true "通常ファイルとして存在する" \
     "$([ -f "$hook_file" ] && echo 1 || echo 0)" "path: $hook_file"
 assert_true "実行権限がある" \
     "$([ -f "$hook_file" ] && [ -x "$hook_file" ] && echo 1 || echo 0)" "path: $hook_file"
+
+start_test "settings.json に memory-mcp の clone と MEMORY_MCP_PATH が現れない"
+# jq を通さず生のバイト列を見る: hooks 以外のキーやコメント風の文字列も含めて、
+# どこにも残っていないことを確かめる。
+if [ -f "$settings" ]; then
+    while IFS= read -r needle; do
+        [ -n "$needle" ] || continue
+        assert_eq "\"$needle\" を含む行の数" "0" \
+            "$(grep -c -F -- "$needle" "$settings" || true)"
+    done <<EOF
+$forbidden_in_settings
+EOF
+else
+    fail "settings.json が無い" "path: $settings"
+fi
 
 start_test "リポジトリに .codex/hooks.json が存在しない"
 # -e はリンク切れのシンボリックリンクを見逃すため -L も確かめる。
