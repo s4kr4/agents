@@ -1,7 +1,7 @@
 ---
 name: implementer
 description: Implementation specialist for any domain (backend API, frontend UI, CLI, scripts, libraries). Turns failing tests GREEN with minimal code and refactors. Domain-specific implementation skills are selected per delegation.
-model: sonnet
+model: opus
 color: blue
 tools: Read, Edit, Write, Bash, Grep, Glob
 mcpServers:
