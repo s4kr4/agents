@@ -101,7 +101,11 @@ make memory-demo  # 最小デモ
 
 ## 作業方針の自動注入
 
-共有メモリの `philosophy` タグに保存した記憶を、SessionStart フック（`memory/hook-session-start-philosophy.sh`）がセッション開始時・`/clear` 後・コンテキスト圧縮後に自動注入します。
+共有メモリの `philosophy` タグに保存した記憶を、SessionStart フック（`~/.agents/.claude/scripts/hook-session-start-philosophy.sh`）がセッション開始時・`/clear` 後・コンテキスト圧縮後に自動注入します。
+
+フックが呼び出す共有メモリ CLI は別リポジトリ memory-mcp にあります。任意のパスへ clone し（`gh repo clone s4kr4/memory-mcp <任意のパス>`）、環境変数 `MEMORY_MCP_PATH` にその clone の絶対パスを設定してください。`MEMORY_MCP_PATH` に既定値はなく、未設定のままでは記憶を読み込まず注意文を注入します。
+
+`MEMORY_MCP_PATH` はシェル環境で設定します（`.claude/settings.json` には書きません）。シェルの設定ファイルで export する形になるため、対話シェルを経由しない起動には届かず、その場合は注意文にフォールバックします。
 
 対応環境は Linux・WSL・macOS です。ネイティブ Windows には配布していません（配布は bash 版の `deploy.sh` のみで、PowerShell 版の導入スクリプトは MCP のみを扱います）。実行には bash・jq・GNU coreutils の `timeout`（macOS では Homebrew の `gtimeout`）が必要です。macOS では事前に `brew install jq coreutils` を実行してください。
 
@@ -115,7 +119,7 @@ Codex はリポジトリで管理せず、`~/.codex/hooks.json` の `hooks.Sessi
   "hooks": [
     {
       "type": "command",
-      "command": "/home/<ユーザー名>/.agents/memory/hook-session-start-philosophy.sh",
+      "command": "/home/<ユーザー名>/.agents/.claude/scripts/hook-session-start-philosophy.sh",
       "timeout": 10,
       "statusMessage": "作業方針を読み込み中..."
     }
