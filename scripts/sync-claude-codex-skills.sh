@@ -15,37 +15,9 @@ EOF
 
 direction=""
 dry_run=0
-
-while [[ $# -gt 0 ]]; do
-    case "$1" in
-        --from)
-            direction="${2:-}"
-            shift 2
-            ;;
-        --dry-run)
-            dry_run=1
-            shift
-            ;;
-        -h|--help)
-            usage
-            exit 0
-            ;;
-        *)
-            echo "Unknown argument: $1" >&2
-            usage >&2
-            exit 1
-            ;;
-    esac
-done
-
-if [[ "$direction" != "claude" && "$direction" != "codex" ]]; then
-    echo "--from must be claude or codex" >&2
-    usage >&2
-    exit 1
-fi
-
-repo_root="$(git rev-parse --show-toplevel)"
-cd "$repo_root"
+# repo_root のような汎用名は利用者の環境にエクスポートされていることがある。
+# 同期先は copy_dir の rm -rf の対象になるので、環境から継承せず無条件に決める。
+sync_repo_root="$(git rev-parse --show-toplevel)"
 
 copy_dir() {
     local src="$1"
@@ -92,8 +64,10 @@ to_codex_agent_skill() {
         printf 'name: %s\n' "$name"
         printf 'description: %s\n' "$description"
         printf -- '---\n\n'
+        # The replacement text contains literal backticks; shell expansion is not intended.
+        # shellcheck disable=SC2016
         extract_body "$src" \
-            | sed "s#~/.claude/#$repo_root/.claude/#g" \
+            | sed "s#~/.claude/#$sync_repo_root/.claude/#g" \
             | sed 's/@code-investigator/`code-investigator`/g; s/@code-planner/`code-planner`/g; s/@code-safety-inspector/`code-safety-inspector`/g; s/@general-implementer/`general-implementer`/g; s/@web-api-implementer/`web-api-implementer`/g; s/@web-ui-implementer/`web-ui-implementer`/g'
     } > "$dst"
 }
@@ -134,8 +108,10 @@ to_claude_agent() {
         printf -- '---\n'
         cat "$frontmatter_tmp"
         printf -- '---\n\n'
+        # The search text contains literal backticks; shell expansion is not intended.
+        # shellcheck disable=SC2016
         extract_body "$src" \
-            | sed "s#$repo_root/.claude/#~/.claude/#g" \
+            | sed "s#$sync_repo_root/.claude/#~/.claude/#g" \
             | sed 's/`code-investigator`/@code-investigator/g; s/`code-planner`/@code-planner/g; s/`code-safety-inspector`/@code-safety-inspector/g; s/`general-implementer`/@general-implementer/g; s/`web-api-implementer`/@web-api-implementer/g; s/`web-ui-implementer`/@web-ui-implementer/g'
     } > "$dst"
 
@@ -199,10 +175,47 @@ sync_agents_codex_to_claude() {
     done
 }
 
-if [[ "$direction" == "claude" ]]; then
-    sync_shared_skills_claude_to_codex
-    sync_agents_claude_to_codex
-else
-    sync_shared_skills_codex_to_claude
-    sync_agents_codex_to_claude
+main() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --from)
+                direction="${2:-}"
+                shift 2
+                ;;
+            --dry-run)
+                dry_run=1
+                shift
+                ;;
+            -h|--help)
+                usage
+                exit 0
+                ;;
+            *)
+                echo "Unknown argument: $1" >&2
+                usage >&2
+                exit 1
+                ;;
+        esac
+    done
+
+    if [[ "$direction" != "claude" && "$direction" != "codex" ]]; then
+        echo "--from must be claude or codex" >&2
+        usage >&2
+        exit 1
+    fi
+
+    cd "$sync_repo_root"
+
+    if [[ "$direction" == "claude" ]]; then
+        sync_shared_skills_claude_to_codex
+        sync_agents_claude_to_codex
+    else
+        sync_shared_skills_codex_to_claude
+        sync_agents_codex_to_claude
+    fi
+}
+
+# The conversion functions are reused by the read-only sync checker when sourced.
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
 fi
