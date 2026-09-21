@@ -126,8 +126,9 @@ sync_shared_skills_claude_to_codex() {
     for skill in "$src_root"/*; do
         [[ -d "$skill" ]] || continue
 
+        # _tracker の使用ログも synced の配信物も Claude Code が自動生成するもので、このリポジトリが管理する共有スキルではない。
         case "$(basename "$skill")" in
-            _tracker)
+            _tracker | synced)
                 continue
                 ;;
         esac

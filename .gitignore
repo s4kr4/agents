@@ -1,5 +1,6 @@
 .claude/settings.local.json
 .claude/skills/_tracker
+.claude/skills/synced/
 .claude/skills/*/feedback/
 .codex/skills/*/feedback/
 __pycache__/

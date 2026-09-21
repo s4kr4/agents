@@ -2082,6 +2082,24 @@ assert_match "stdout に usage が出る" '[Uu]sage' "$run_out"
 assert_worktree_unchanged "同期スクリプトの -h"
 assert_index_unchanged "同期スクリプトの -h"
 
+# Claude Code のスキル配信は .claude/skills/synced/ へ書き込まれる。deploy.sh が
+# ~/.claude/skills をこのリポジトリの .claude/skills へ symlink するため、配信物は
+# リポジトリ内に現れる。_tracker と同じく Codex 側の同期対象から外す。
+start_test "同期スクリプトは配信物の synced/ を Codex 側へ複製しない"
+new_repo
+mkdir -p "$repo/.claude/skills/synced/delivered" "$repo/.claude/skills/newskill" \
+    || fatal "配信物のフィクスチャ作成に失敗"
+printf '配信されたスキルの中身。\n' > "$repo/.claude/skills/synced/delivered/SKILL.md"
+write_skill "$repo/.claude/skills/newskill/SKILL.md" "新規スキルの本文。"
+run_isolated "$real_sync" --from claude
+codex_tree="$(cd "$repo" && find .codex | LC_ALL=C sort | tr '\n' ' ')"
+assert_eq "exit 0" "0" "$run_rc"
+assert_eq "stderr は空" "" "$run_err"
+assert_not_contains "配信物が Codex 側へ複製されない" ".codex/skills/synced" "$codex_tree"
+assert_true "通常のスキルは従来どおり同期される" \
+    "$([ -f "$repo/.codex/skills/newskill/SKILL.md" ] && echo 1 || echo 0)" \
+    "tree: $codex_tree"
+
 # ---------------------------------------------------------------------------
 # 既定モード: 両側ステージでも対応ペアの内容を比較する
 # ---------------------------------------------------------------------------
