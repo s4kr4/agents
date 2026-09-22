@@ -6,7 +6,7 @@ deploy:
 	@AGENTSPATH=$(AGENTSPATH) bash $(AGENTSPATH)/scripts/deploy.sh
 
 update:
-	git pull origin master
+	git pull origin main
 	@AGENTSPATH=$(AGENTSPATH) bash $(AGENTSPATH)/scripts/deploy.sh
 
 sync-skills-claude:

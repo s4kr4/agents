@@ -39,6 +39,9 @@ HOOK_UNDER_TEST = Path(
 )
 
 # フックが実行中に書き換えてはならない実データ。
+# 先頭 2 つはこのリポジトリに存在しないパス。snapshot_tree() は非存在なら None を
+# 返すため、フックが memory/ 配下を作った場合だけ差分として現れる。
+# 「このリポジトリに memory/ を作らせない」ことの回帰ガードとして意図的に残す。
 REAL_DATA_DIRS = (
     REPO_ROOT / "memory" / "local",
     REPO_ROOT / "memory" / "vault",
@@ -1858,6 +1861,38 @@ class TestHookWithClosedStdin(HookTestBase):
 
         # Assert
         self.assert_stdout_is_context(run, NOTICE)
+
+
+class TestRealDataGuard(unittest.TestCase):
+    """REAL_DATA_DIRS のスナップショット比較が、実データの再作成を検出できること。"""
+
+    def test_repo_memory_paths_are_guarded_and_absent(self):
+        # Arrange
+        repo_memory_dirs = (REPO_ROOT / "memory" / "local", REPO_ROOT / "memory" / "vault")
+
+        # Assert
+        for path in repo_memory_dirs:
+            self.assertIn(path, REAL_DATA_DIRS)
+            self.assertFalse(
+                os.path.lexists(path),
+                f"{path} exists: this entry no longer guards against recreation",
+            )
+
+    def test_snapshot_tree_detects_a_path_that_did_not_exist_before(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            recreated = Path(tmp) / "memory" / "local"
+
+            # Arrange
+            before = snapshot_tree(recreated)
+
+            # Act
+            recreated.mkdir(parents=True)
+            (recreated / "notes.md").write_text("x", encoding="utf-8")
+            after = snapshot_tree(recreated)
+
+            # Assert
+            self.assertIsNone(before)
+            self.assertNotEqual(after, before)
 
 
 if __name__ == "__main__":
