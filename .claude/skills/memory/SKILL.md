@@ -7,9 +7,11 @@ description: 共有メモリ基盤の設定・構成・障害診断・復旧を�
 
 共有メモリ基盤の運用スキル。日常の読み書きやセッションからの抽出を自分で実行するスキルではなく、設定・実装・障害を調べるときに使う。
 
+基盤の実装（CLI・MCP サーバー・ドキュメント・検査スクリプト）は別リポジトリ memory-mcp にあり、その clone の位置は環境変数 `MEMORY_MCP_PATH` で解決する。`MEMORY_MCP_PATH` が未設定の端末では以下の `$MEMORY_MCP_PATH/...` を参照できないため、まず設定の有無を確認する。
+
 ## 責務
 
-- `memory/README.md` と `memory/DETAILS.md` を正本として、MCP・CLI・保存先の構成を確認する
+- `$MEMORY_MCP_PATH/README.md` と `$MEMORY_MCP_PATH/DETAILS.md` を正本として、MCP・CLI・保存先の構成を確認する
 - `LLM_MEMORY_CONFIG`、`LLM_MEMORY_VAULT`、`LLM_MEMORY_LOCAL_DIR`、`LLM_MEMORY_QUEUE_DIR` の解決結果を確認する
 - MCP の起動失敗、接続失敗、権限・承認エラー、保存先の I/O エラーを原因別に切り分ける
 - CLI と MCP が同じ明示設定・同じ Vault を使っていることを確認する
@@ -30,7 +32,7 @@ description: 共有メモリ基盤の設定・構成・障害診断・復旧を�
 - `LLM_MEMORY_VAULT`、`LLM_MEMORY_LOCAL_DIR`、`LLM_MEMORY_QUEUE_DIR`、`LLM_MEMORY_CONFIG` の 4 変数をすべて `env VAR=...` で一時ディレクトリへ明示上書きしてから実行する。環境変数は `config.toml` より優先されるため、設定ファイルの差し替えだけでは隔離できない
 - 実行前に `env | grep LLM_MEMORY` で環境側の値を確認し、書き込み前に `search` で一時 Vault が空であることを確かめる
 - 検証後に実 Vault のファイル一覧と `_index.md` のチェックサムが不変であることを確認する
-- 隔離の参照実装は `scripts/memory-mcp-check.sh`
+- 隔離の参照実装は `$MEMORY_MCP_PATH/scripts/memory-mcp-check.sh`
 
 ## 診断の順序
 
@@ -43,4 +45,4 @@ description: 共有メモリ基盤の設定・構成・障害診断・復旧を�
 
 同一端末のプロセス間ロックは端末内の競合だけを扱う。Syncthing や Obsidian による別端末・手動編集の競合は別途確認し、競合ファイルを無断で削除しない。
 
-詳細な保存形式、競合、復旧手順、CLI は [`memory/DETAILS.md`](../../../memory/DETAILS.md) と [`memory/README.md`](../../../memory/README.md) を参照する。
+詳細な保存形式、競合、復旧手順、CLI は `$MEMORY_MCP_PATH/DETAILS.md` と `$MEMORY_MCP_PATH/README.md` を参照する。

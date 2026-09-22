@@ -167,9 +167,11 @@ journalctl -p err -n 20   # エラーログ（systemd環境）
 - key: カルテ名の kebab-case（例: `xrdp-drm-permission`）
 - summary: 症状、環境、調査過程、根本原因、解決策、学んだことを含むカルテ本文
 
+共有メモリ CLI は別リポジトリ memory-mcp にあり、その clone の位置は環境変数 `MEMORY_MCP_PATH` で解決する（未設定の端末では次のコマンドを実行できない）。
+
 ```bash
 # 関連カルテを検索（global メモリを混ぜない）
-~/.agents/memory/run-python.sh ~/.agents/memory/memory.py search \
+"$MEMORY_MCP_PATH/run-python.sh" "$MEMORY_MCP_PATH/memory.py" search \
   --query 'xrdp' --project-id linux-diag --scope project
 ```
 

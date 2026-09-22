@@ -28,4 +28,4 @@ confidence は確認の確かさに合わせ、未検証の推測には付けな
 
 ## MCP が使えない場合
 
-`memory/README.md` の同じ明示設定を確認したうえで、`list-unextracted` → `write-memory --session-id` → `mark-extracted --session-id` の順に CLI を使う。設定エラーや権限エラーを別 Vault で回避しない。部分失敗の調査は `memory` スキルへ委譲する。
+`$MEMORY_MCP_PATH/README.md`（基盤は別リポジトリ memory-mcp にあり、clone の位置を指す `MEMORY_MCP_PATH` が未設定の端末では参照できない）の同じ明示設定を確認したうえで、`list-unextracted` → `write-memory --session-id` → `mark-extracted --session-id` の順に CLI を使う。設定エラーや権限エラーを別 Vault で回避しない。部分失敗の調査は `memory` スキルへ委譲する。

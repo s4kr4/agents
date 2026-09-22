@@ -30,4 +30,4 @@ description: Claude Code と Codex の通常の作業で共有メモリを読み
 
 `write_memory` の日常保存では `session_id` を省略できる。`scope="project"` では `project_id` を指定する。`memory-extract` が元セッションから抽出するときだけ、元の `session_id` を必ず渡す。
 
-保存形式、保存先、CLI フォールバック、接続設定は [`memory/README.md`](../../../memory/README.md) を参照する。MCP の起動・権限・保存エラーは `memory` スキルで診断する。
+保存形式、保存先、CLI フォールバック、接続設定は `$MEMORY_MCP_PATH/README.md` を参照する（基盤は別リポジトリ memory-mcp にあり、clone の位置を指す `MEMORY_MCP_PATH` が未設定の端末では参照できない）。MCP の起動・権限・保存エラーは `memory` スキルで診断する。
