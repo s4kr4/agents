@@ -22,7 +22,6 @@ Claude Code のグローバル設定を管理するリポジトリです。
 │   ├── skills/            # スキル定義（Claude 側のミラー）
 │   └── rules/             # 開発ルール・ガイドライン
 ├── .githooks/             # リポジトリ共有の Git フック（既定では無効）
-├── memory/                # 共有メモリ関連のCLI、hook、設計資料
 ├── scripts/
 │   └── deploy.sh          # デプロイスクリプト
 └── Makefile
@@ -81,29 +80,36 @@ SKIP_SKILL_SYNC_CHECK=1 git commit -m "..."
 
 ## 共有メモリ
 
-ファイルベースの 2 層構成で Codex や Claude Code など複数の LLM クライアントからセッション横断の記憶を共有する仕組みです。
+ファイルベースの 2 層構成で Codex や Claude Code など複数の LLM クライアントからセッション横断の記憶を共有する仕組みです。日常の読み書きは `shared-memory` stdio MCP サーバー経由で行います。
 
 - Vault（`memories`。Syncthing 同期対象）: 安定した記憶を Obsidian Vault 配下に Markdown で保存。1 論理キー = 1 ファイルで、値の変遷は同一ファイル内の変更履歴に追記する
-- local（`sessions`/`events`/`observations`。同期対象外）: 生ログ・pipeline 層のデータを `~/.agents/memory/local/` 配下にファイルとして保存
+- local（`sessions`/`events`/`observations`。同期対象外）: 生ログ・pipeline 層のデータを `$MEMORY_MCP_PATH/local/` 配下にファイルとして保存
 
-日常の読み書きは `shared-memory` stdio MCP サーバー経由で行います。各端末に uv と保存先の TOML を設定し、各 CLI・Desktop アプリへ登録します。OS ごとの保存先をアプリから切り離せますが、端末ごとの導入とアプリの承認設定は残ります。リモート常駐サービスへの権限集約ではありません。
-
-[導入・OS 別の設定・検証状況](memory/README.md#mcp-の導入)に Ubuntu/macOS/Windows の手順をまとめています。native Windows では PowerShell の入口を使用でき、Bash・make は不要です。GUI と Windows/macOS の実機確認は自動試験とは区別して扱います。
-
-保存形式や競合時の扱いなどの内部仕様は [`memory/DETAILS.md`](memory/DETAILS.md) にまとめています。
-
-Codex のセッション用シェルラッパー、初期化・移行・キュー処理の CLI は維持しています。CLI を MCP の代わりに使うときも同じ明示設定が必要です。壊れた設定や権限エラーを別 Vault への保存で回避しません。日常操作は `shared-memory`、履歴の知識抽出は `memory-extract`、診断は `memory` スキルを参照してください。
+CLI・MCP サーバー・ストア・導入スクリプト・詳細ドキュメントは別リポジトリ [memory-mcp](https://github.com/s4kr4/memory-mcp) にあります。任意のパスへ clone し、環境変数 `MEMORY_MCP_PATH` にその clone の絶対パスを設定してください。`MEMORY_MCP_PATH` に既定値はなく、未設定の端末では共有メモリを使う機能が動作しません。
 
 ```bash
-make memory-init  # Vault/local ディレクトリの初期化
-make memory-demo  # 最小デモ
+gh repo clone s4kr4/memory-mcp <任意のパス>
+export MEMORY_MCP_PATH=<clone の絶対パス>
 ```
+
+導入手順・OS 別の設定・保存先の指定は `$MEMORY_MCP_PATH/README.md`、保存形式や競合時の扱いなどの内部仕様は `$MEMORY_MCP_PATH/DETAILS.md` を参照してください。初期化・最小デモ・MCP の疎通確認（`make memory-init` / `make memory-demo` / `make memory-mcp-check`）も memory-mcp 側の Makefile で実行します。
+
+このリポジトリが持つのはクライアント側の連携部分だけです。
+
+| 対象 | パス | 役割 |
+| --- | --- | --- |
+| SessionStart フック | `.claude/scripts/hook-session-start-philosophy.sh` | `philosophy` タグの記憶をセッション開始時に注入する（[作業方針の自動注入](#作業方針の自動注入)） |
+| Stop フック | `.claude/scripts/hook-stop-memory.sh` | セッション終了時に transcript から記憶を記録する |
+| Codex ラッパー | `scripts/codex-memory-*.sh` | codex の起動から終了までをセッションとして記録する |
+| スキル | `.claude/skills/` の `shared-memory`・`memory-extract`・`memory` | 日常操作・履歴からの知識抽出・診断 |
+
+いずれも `MEMORY_MCP_PATH` が絶対パスで設定され、その先に CLI がある場合のみ動作します。壊れた設定や権限エラーを別 Vault への保存で回避しません。
 
 ## 作業方針の自動注入
 
 共有メモリの `philosophy` タグに保存した記憶を、SessionStart フック（`~/.agents/.claude/scripts/hook-session-start-philosophy.sh`）がセッション開始時・`/clear` 後・コンテキスト圧縮後に自動注入します。
 
-フックが呼び出す共有メモリ CLI は別リポジトリ memory-mcp にあります。任意のパスへ clone し（`gh repo clone s4kr4/memory-mcp <任意のパス>`）、環境変数 `MEMORY_MCP_PATH` にその clone の絶対パスを設定してください。`MEMORY_MCP_PATH` に既定値はなく、未設定のままでは記憶を読み込まず注意文を注入します。
+フックは[共有メモリ](#共有メモリ)の CLI を呼び出すため、`MEMORY_MCP_PATH` の設定が必要です。未設定のままでは記憶を読み込まず注意文を注入します。
 
 `MEMORY_MCP_PATH` はシェル環境で設定します（`.claude/settings.json` には書きません）。シェルの設定ファイルで export する形になるため、対話シェルを経由しない起動には届かず、その場合は注意文にフォールバックします。
 

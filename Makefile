@@ -1,6 +1,6 @@
 AGENTSPATH := $(realpath $(dir $(lastword $(MAKEFILE_LIST))))
 
-.PHONY: deploy update sync-skills-claude sync-skills-codex sync-skills-claude-dry sync-skills-codex-dry hooks-install hooks-uninstall memory-init memory-demo memory-mcp-check help
+.PHONY: deploy update sync-skills-claude sync-skills-codex sync-skills-claude-dry sync-skills-codex-dry hooks-install hooks-uninstall help
 
 deploy:
 	@AGENTSPATH=$(AGENTSPATH) bash $(AGENTSPATH)/scripts/deploy.sh
@@ -29,21 +29,6 @@ hooks-uninstall:
 	@git -C $(AGENTSPATH) config --unset core.hooksPath 2>/dev/null || true
 	@echo "Disabled repo hooks (core.hooksPath unset)"
 
-memory-init:
-	@$(AGENTSPATH)/memory/run-python.sh $(AGENTSPATH)/memory/memory.py init-db
-
-memory-demo:
-	@$(AGENTSPATH)/memory/run-python.sh $(AGENTSPATH)/memory/memory.py init-db
-	@$(AGENTSPATH)/memory/run-python.sh $(AGENTSPATH)/memory/memory.py start-session --client codex --user-id default --project-id agents --session-id demo
-	@$(AGENTSPATH)/memory/run-python.sh $(AGENTSPATH)/memory/memory.py append-event --session-id demo --client codex --user-id default --project-id agents --role user --kind message --content '応答は日本語で行ってください'
-	@$(AGENTSPATH)/memory/run-python.sh $(AGENTSPATH)/memory/memory.py extract --session-id demo
-	@$(AGENTSPATH)/memory/run-python.sh $(AGENTSPATH)/memory/memory.py consolidate --entity-id default
-	@$(AGENTSPATH)/memory/run-python.sh $(AGENTSPATH)/memory/memory.py get-context --user-id default --project-id agents
-	@$(AGENTSPATH)/memory/run-python.sh $(AGENTSPATH)/memory/memory.py end-session --session-id demo --append-summary-event
-
-memory-mcp-check:
-	@AGENTSPATH=$(AGENTSPATH) bash $(AGENTSPATH)/scripts/memory-mcp-check.sh
-
 help:
 	@echo "Usage:"
 	@echo "  make deploy  - Deploy Claude Code config (CLAUDE.md, agents, skills, rules)"
@@ -54,6 +39,3 @@ help:
 	@echo "  make sync-skills-codex-dry   - Preview Codex -> Claude sync"
 	@echo "  make hooks-install           - Enable the repo pre-commit hook (skill sync check)"
 	@echo "  make hooks-uninstall         - Disable the repo pre-commit hook"
-	@echo "  make memory-init             - Initialize the shared memory Vault/local directories"
-	@echo "  make memory-demo             - Run a minimal shared memory demo"
-	@echo "  make memory-mcp-check        - Handshake-test the shared-memory MCP server (isolated temp storage)"
