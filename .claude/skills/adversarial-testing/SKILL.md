@@ -73,7 +73,7 @@ description: 敵対的入力の設計軸・隔離テスト環境の設計・変�
 ### 実施タイミング
 
 - **RED（tester）**: 開始時 GREEN のアサーション（退行ガード・invariant guard・否定形）の有効性の根拠として必須。behavior の failing アサーションについても、充足可能性チェックの仮実装に変異を当てて検出力を確認する
-- **Phase 4（safety inspector）**: 独立した視点で実施する。tester が見落とした入力空間はここで見つかることが多い
+- **Phase 3（safety inspector）**: 独立した視点で実施する。tester が見落とした入力空間はここで見つかることが多い
 
 ### パターン
 

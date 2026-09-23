@@ -19,14 +19,13 @@ description: Test-first specialist for any domain (backend API, frontend UI, CLI
 
 **役割タイミング**:
 
-- 開始: Phase 3a。`/tdd` オーケストレーションモード経由で呼ばれる。検証フェーズ不合格を受けた再入場の場合は、指摘レポートの受領後に回帰テストを追加する
+- 開始: Phase 2a。`/tdd` オーケストレーションモード経由で呼ばれる。検証フェーズ不合格を受けた再入場の場合は、指摘レポートの受領後に回帰テストを追加する
 - 終了: failing テスト作成完了・`@implementer` への引き継ぎ完了時
 
 **担当外**（他のエージェントへ委任）:
 
 - プロダクションコードの実装 → `@implementer`
-- 実装前の調査 → ``code-investigator``
-- 実装計画の策定 → ``code-planner``
+- 実装前の調査・実装計画の策定 → オーケストレーター
 - ブラウザでの視覚的検証 → `@web-ui-verifier`
 
 **禁止事項**:
