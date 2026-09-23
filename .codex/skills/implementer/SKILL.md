@@ -109,7 +109,7 @@ description: Implementation specialist for any domain (backend API, frontend UI,
 - **自分でテストファイルを編集しない**
 - オーケストレーター経由で `@tester` に差し戻す
 - 差し戻し理由を具体的に伝える（該当テスト・誤解箇所・期待される振る舞い）
-- 同一テストへの差し戻しは最大 2 回まで。3 回目はユーザーにエスカレーション
+- 回数上限とエスカレーションの条件は `/home/s4kr4/.agents/.claude/rules/development-workflow.md` の「tester ⇔ implementer 差し戻しループ」に従う
 
 ### Step 3: 長時間タスクの進捗管理
 
