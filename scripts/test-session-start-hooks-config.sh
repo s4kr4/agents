@@ -11,7 +11,8 @@
 #     SessionStart に 1 件だけ登録され、matcher / type / command / timeout / statusMessage が仕様どおり
 #   - 既存の herdr エントリと、PreToolUse / PostToolUse / Stop の内容が変わらない
 #   - command が指すフック本体が、このリポジトリに実行権限付きで実在する
-#   - settings.json のどこにも memory-mcp の clone のパスと MEMORY_MCP_PATH が現れない
+#   - settings.json のどこにも hikidashi-mcp の clone のパスと HIKIDASHI_MCP_PATH が現れない
+#     （改名前の memory-mcp の clone のパスと MEMORY_MCP_PATH も同様）
 #     （CLI の位置はシェル環境から供給する決定のため）
 #   - リポジトリに .codex/hooks.json が無い（Codex がプロジェクト層として読むと、
 #     ユーザー層の定義と重複して注入されるため）
@@ -36,8 +37,11 @@ hook_command='~/.agents/.claude/scripts/hook-session-start-philosophy.sh'
 hook_relative_path='.claude/scripts/hook-session-start-philosophy.sh'
 hook_matcher='startup|clear|compact'
 # settings.json に現れてはならない文字列。フック本体はこのリポジトリにあり、
-# 共有メモリ CLI の位置は MEMORY_MCP_PATH としてシェル環境から供給する。
-forbidden_in_settings='worktrees/github.com/s4kr4/memory-mcp
+# 共有メモリ CLI の位置は HIKIDASHI_MCP_PATH としてシェル環境から供給する。
+# 改名前の clone と変数名も、旧構成の名残として同様に禁止する。
+forbidden_in_settings='worktrees/github.com/s4kr4/hikidashi-mcp
+HIKIDASHI_MCP_PATH
+worktrees/github.com/s4kr4/memory-mcp
 MEMORY_MCP_PATH'
 
 herdr_entry='{
@@ -302,7 +306,7 @@ assert_true "通常ファイルとして存在する" \
 assert_true "実行権限がある" \
     "$([ -f "$hook_file" ] && [ -x "$hook_file" ] && echo 1 || echo 0)" "path: $hook_file"
 
-start_test "settings.json に memory-mcp の clone と MEMORY_MCP_PATH が現れない"
+start_test "settings.json に共有メモリ基盤の clone のパスと、その位置を渡す変数名が現れない"
 # jq を通さず生のバイト列を見る: hooks 以外のキーやコメント風の文字列も含めて、
 # どこにも残っていないことを確かめる。
 if [ -f "$settings" ]; then

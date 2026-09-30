@@ -44,8 +44,8 @@ notification_condition = "always"
 [projects."/home/s4kr4/.agents"]
 trust_level = "trusted"
 
-[mcp_servers.shared-memory]
+[mcp_servers.hikidashi]
 default_tools_approval_mode = "approve"
 
-[mcp_servers.shared-memory.tools.forget]
+[mcp_servers.hikidashi.tools.forget]
 approval_mode = "prompt"

@@ -158,7 +158,7 @@ journalctl -p err -n 20   # エラーログ（systemd環境）
 
 過去の調査事例は、Claude Code / Codex の両方から参照できる共有メモリで管理する。ローカルの `cartes/` ディレクトリには保存しない。
 
-カルテを参照・作成・更新する場合は `shared-memory` スキルを読み、次の固定分類を使う。
+カルテを参照・作成・更新する場合は `hikidashi` スキルを読み、次の固定分類を使う。
 
 - scope: `project`
 - project ID: `linux-diag`
@@ -167,11 +167,11 @@ journalctl -p err -n 20   # エラーログ（systemd環境）
 - key: カルテ名の kebab-case（例: `xrdp-drm-permission`）
 - summary: 症状、環境、調査過程、根本原因、解決策、学んだことを含むカルテ本文
 
-共有メモリ CLI は別リポジトリ memory-mcp にあり、その clone の位置は環境変数 `MEMORY_MCP_PATH` で解決する（未設定の端末では次のコマンドを実行できない）。
+共有メモリ CLI は別リポジトリ hikidashi-mcp にあり、その clone の位置は環境変数 `HIKIDASHI_MCP_PATH` で解決する（未設定の端末では次のコマンドを実行できない）。
 
 ```bash
 # 関連カルテを検索（global メモリを混ぜない）
-"$MEMORY_MCP_PATH/run-python.sh" "$MEMORY_MCP_PATH/memory.py" search \
+"$HIKIDASHI_MCP_PATH/run-python.sh" "$HIKIDASHI_MCP_PATH/memory.py" search \
   --query 'xrdp' --project-id linux-diag --scope project
 ```
 

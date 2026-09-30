@@ -3,18 +3,18 @@ set -euo pipefail
 
 input=$(cat)
 
-# 共有メモリ CLI の位置は MEMORY_MCP_PATH だけで決める。既定値もフォールバック
+# 共有メモリ CLI の位置は HIKIDASHI_MCP_PATH だけで決める。既定値もフォールバック
 # 探索も持たないのは、未設定の端末で意図しない clone を動かさないため。相対パスと
 # 未展開のチルダは呼び出し元の作業ディレクトリ次第で別物を指すので受け付けない。
 # Stop フックは停止をブロックしてはならないので、使えないときは何も言わず exit 0。
-memory_mcp_path="${MEMORY_MCP_PATH:-}"
-case "$memory_mcp_path" in
+hikidashi_mcp_path="${HIKIDASHI_MCP_PATH:-}"
+case "$hikidashi_mcp_path" in
   /*) ;;
   *) exit 0 ;;
 esac
-memory_cli="${memory_mcp_path}/memory.py"
-run_python="${memory_mcp_path}/run-python.sh"
-if [ ! -d "$memory_mcp_path" ] || [ ! -f "$memory_cli" ] ||
+memory_cli="${hikidashi_mcp_path}/memory.py"
+run_python="${hikidashi_mcp_path}/run-python.sh"
+if [ ! -d "$hikidashi_mcp_path" ] || [ ! -f "$memory_cli" ] ||
   [ ! -f "$run_python" ] || [ ! -x "$run_python" ]; then
   exit 0
 fi

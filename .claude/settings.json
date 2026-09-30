@@ -23,7 +23,7 @@
       "Bash(docker compose *)",
       "Bash(git *)",
       "Bash(playwright-cli *)",
-      "mcp__shared-memory__*"
+      "mcp__hikidashi__*"
     ],
     "deny": [
       "Bash(sudo *)",
@@ -52,7 +52,7 @@
       "Edit(**/secrets/**)"
     ],
     "ask": [
-      "mcp__shared-memory__forget"
+      "mcp__hikidashi__forget"
     ],
     "defaultMode": "auto"
   },

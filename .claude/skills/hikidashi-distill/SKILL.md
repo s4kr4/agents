@@ -1,11 +1,11 @@
 ---
-name: memory-extract
-description: 未処理セッションの要約から、長期的に有効な意味記憶だけを抽出して Vault に保存する。セッションから学習、記憶を抽出、memory extract、/memory-extract の依頼で使う。
+name: hikidashi-distill
+description: 未処理セッションの要約から、長期的に有効な意味記憶だけを抽出して Vault に保存する。セッションから学習、記憶を抽出、hikidashi distill、/hikidashi-distill の依頼で使う。
 ---
 
 # Memory Extract
 
-セッション履歴を安定した意味記憶へ変換する専用ワークフロー。通常の記憶の読み書きは `shared-memory` を使う。
+セッション履歴を安定した意味記憶へ変換する専用ワークフロー。通常の記憶の読み書きは `hikidashi` を使う。
 
 ## 手順
 
@@ -28,4 +28,4 @@ confidence は確認の確かさに合わせ、未検証の推測には付けな
 
 ## MCP が使えない場合
 
-`$MEMORY_MCP_PATH/README.md`（基盤は別リポジトリ memory-mcp にあり、clone の位置を指す `MEMORY_MCP_PATH` が未設定の端末では参照できない）の同じ明示設定を確認したうえで、`list-unextracted` → `write-memory --session-id` → `mark-extracted --session-id` の順に CLI を使う。設定エラーや権限エラーを別 Vault で回避しない。部分失敗の調査は `memory` スキルへ委譲する。
+`$HIKIDASHI_MCP_PATH/README.md`（基盤は別リポジトリ hikidashi-mcp にあり、clone の位置を指す `HIKIDASHI_MCP_PATH` が未設定の端末では参照できない）の同じ明示設定を確認したうえで、`list-unextracted` → `write-memory --session-id` → `mark-extracted --session-id` の順に CLI を使う。設定エラーや権限エラーを別 Vault で回避しない。部分失敗の調査は `hikidashi-doctor` スキルへ委譲する。

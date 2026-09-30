@@ -21,7 +21,7 @@ heading="## ユーザーの作業方針（共有メモリ philosophy、自動注
 instruction="設計判断ではこの方針に照らして判断し、該当する項目を根拠として示すこと。プロジェクト固有の規約（AGENTS.md / CLAUDE.md 等）と衝突する場合はプロジェクト規約を優先する。"
 # emit_notice に直接埋め込むため事前にエスケープ済み。この文字列に含まれる
 # JSON 上の特殊文字は "philosophy" を囲む二重引用符だけ。
-notice_json_escaped='共有メモリから作業方針（philosophy）を自動で読み込めませんでした。設計判断の前に shared-memory の search（scope=global, tags=[\"philosophy\"]）で取得してください。'
+notice_json_escaped='共有メモリから作業方針（philosophy）を自動で読み込めませんでした。設計判断の前に hikidashi の search（scope=global, tags=[\"philosophy\"]）で取得してください。'
 
 # LLM_MEMORY_HOOK_TIMEOUT は 1〜8 の整数のみ有効。settings.json 側のフック
 # タイムアウト（10秒）を超えないための上限で、それ以外の値（0・負数・9以上・
@@ -40,18 +40,18 @@ emit_notice() {
   exit 0
 }
 
-# 共有メモリ CLI の位置は MEMORY_MCP_PATH だけで決める。既定値もフォールバック
+# 共有メモリ CLI の位置は HIKIDASHI_MCP_PATH だけで決める。既定値もフォールバック
 # 探索も持たないのは、未設定の端末で意図しない clone を動かさないため。相対パスと
 # 未展開のチルダは呼び出し元の作業ディレクトリ次第で別物を指すので受け付けない。
 # 使えない場合は CLI を動かさず注意文を返すため、emit_notice の定義より後に置く。
-memory_mcp_path="${MEMORY_MCP_PATH:-}"
-case "$memory_mcp_path" in
+hikidashi_mcp_path="${HIKIDASHI_MCP_PATH:-}"
+case "$hikidashi_mcp_path" in
   /*) ;;
   *) emit_notice ;;
 esac
-memory_cli="${memory_mcp_path}/memory.py"
-run_python="${memory_mcp_path}/run-python.sh"
-if [ ! -d "$memory_mcp_path" ] || [ ! -f "$memory_cli" ] ||
+memory_cli="${hikidashi_mcp_path}/memory.py"
+run_python="${hikidashi_mcp_path}/run-python.sh"
+if [ ! -d "$hikidashi_mcp_path" ] || [ ! -f "$memory_cli" ] ||
   [ ! -f "$run_python" ] || [ ! -x "$run_python" ]; then
   emit_notice
 fi
@@ -159,7 +159,7 @@ if (length != 1) then error("hook: expected exactly one JSON document") end
             | ($heading_instruction_len + $cumsum[$k] + $k + 2) as $core_len
             | (
                 if $omitted > 0 then
-                  $core_len + 1 + ("（ほか \($omitted) 件は shared-memory search で取得）" | length)
+                  $core_len + 1 + ("（ほか \($omitted) 件は hikidashi search で取得）" | length)
                 else
                   $core_len
                 end
@@ -172,7 +172,7 @@ if (length != 1) then error("hook: expected exactly one JSON document") end
     | ([$HEADING, $INSTRUCTION, ""] + $lines[0:$chosen_k] | join("\n")) as $core
     | (
         if $chosen_omitted > 0 then
-          $core + "\n" + "（ほか \($chosen_omitted) 件は shared-memory search で取得）"
+          $core + "\n" + "（ほか \($chosen_omitted) 件は hikidashi search で取得）"
         else
           $core
         end

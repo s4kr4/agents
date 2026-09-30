@@ -80,19 +80,19 @@ SKIP_SKILL_SYNC_CHECK=1 git commit -m "..."
 
 ## 共有メモリ
 
-ファイルベースの 2 層構成で Codex や Claude Code など複数の LLM クライアントからセッション横断の記憶を共有する仕組みです。日常の読み書きは `shared-memory` stdio MCP サーバー経由で行います。
+ファイルベースの 2 層構成で Codex や Claude Code など複数の LLM クライアントからセッション横断の記憶を共有する仕組みです。日常の読み書きは `hikidashi` stdio MCP サーバー経由で行います。
 
 - Vault（`memories`。Syncthing 同期対象）: 安定した記憶を Obsidian Vault 配下に Markdown で保存。1 論理キー = 1 ファイルで、値の変遷は同一ファイル内の変更履歴に追記する
-- local（`sessions`/`events`/`observations`。同期対象外）: 生ログ・pipeline 層のデータを `$MEMORY_MCP_PATH/local/` 配下にファイルとして保存
+- local（`sessions`/`events`/`observations`。同期対象外）: 生ログ・pipeline 層のデータを `$HIKIDASHI_MCP_PATH/local/` 配下にファイルとして保存
 
-CLI・MCP サーバー・ストア・導入スクリプト・詳細ドキュメントは別リポジトリ [memory-mcp](https://github.com/s4kr4/memory-mcp) にあります。任意のパスへ clone し、環境変数 `MEMORY_MCP_PATH` にその clone の絶対パスを設定してください。`MEMORY_MCP_PATH` に既定値はなく、未設定の端末では共有メモリを使う機能が動作しません。
+CLI・MCP サーバー・ストア・導入スクリプト・詳細ドキュメントは別リポジトリ [hikidashi-mcp](https://github.com/s4kr4/hikidashi-mcp) にあります。任意のパスへ clone し、環境変数 `HIKIDASHI_MCP_PATH` にその clone の絶対パスを設定してください。`HIKIDASHI_MCP_PATH` に既定値はなく、未設定の端末では共有メモリを使う機能が動作しません。
 
 ```bash
-gh repo clone s4kr4/memory-mcp <任意のパス>
-export MEMORY_MCP_PATH=<clone の絶対パス>
+gh repo clone s4kr4/hikidashi-mcp <任意のパス>
+export HIKIDASHI_MCP_PATH=<clone の絶対パス>
 ```
 
-導入手順・OS 別の設定・保存先の指定は `$MEMORY_MCP_PATH/README.md`、保存形式や競合時の扱いなどの内部仕様は `$MEMORY_MCP_PATH/DETAILS.md` を参照してください。初期化・最小デモ・MCP の疎通確認（`make memory-init` / `make memory-demo` / `make memory-mcp-check`）も memory-mcp 側の Makefile で実行します。
+導入手順・OS 別の設定・保存先の指定は `$HIKIDASHI_MCP_PATH/README.md`、保存形式や競合時の扱いなどの内部仕様は `$HIKIDASHI_MCP_PATH/DETAILS.md` を参照してください。初期化・最小デモ・MCP の疎通確認（`make memory-init` / `make memory-demo` / `make hikidashi-mcp-check`）も hikidashi-mcp 側の Makefile で実行します。
 
 このリポジトリが持つのはクライアント側の連携部分だけです。
 
@@ -101,17 +101,17 @@ export MEMORY_MCP_PATH=<clone の絶対パス>
 | SessionStart フック | `.claude/scripts/hook-session-start-philosophy.sh` | `philosophy` タグの記憶をセッション開始時に注入する（[作業方針の自動注入](#作業方針の自動注入)） |
 | Stop フック | `.claude/scripts/hook-stop-memory.sh` | セッション終了時に transcript から記憶を記録する |
 | Codex ラッパー | `scripts/codex-memory-*.sh` | codex の起動から終了までをセッションとして記録する |
-| スキル | `.claude/skills/` の `shared-memory`・`memory-extract`・`memory` | 日常操作・履歴からの知識抽出・診断 |
+| スキル | `.claude/skills/` の `hikidashi`・`hikidashi-distill`・`hikidashi-doctor` | 日常操作・履歴からの知識抽出・診断 |
 
-いずれも `MEMORY_MCP_PATH` が絶対パスで設定され、その先に CLI がある場合のみ動作します。壊れた設定や権限エラーを別 Vault への保存で回避しません。
+いずれも `HIKIDASHI_MCP_PATH` が絶対パスで設定され、その先に CLI がある場合のみ動作します。壊れた設定や権限エラーを別 Vault への保存で回避しません。
 
 ## 作業方針の自動注入
 
 共有メモリの `philosophy` タグに保存した記憶を、SessionStart フック（`~/.agents/.claude/scripts/hook-session-start-philosophy.sh`）がセッション開始時・`/clear` 後・コンテキスト圧縮後に自動注入します。
 
-フックは[共有メモリ](#共有メモリ)の CLI を呼び出すため、`MEMORY_MCP_PATH` の設定が必要です。未設定のままでは記憶を読み込まず注意文を注入します。
+フックは[共有メモリ](#共有メモリ)の CLI を呼び出すため、`HIKIDASHI_MCP_PATH` の設定が必要です。未設定のままでは記憶を読み込まず注意文を注入します。
 
-`MEMORY_MCP_PATH` はシェル環境で設定します（`.claude/settings.json` には書きません）。シェルの設定ファイルで export する形になるため、対話シェルを経由しない起動には届かず、その場合は注意文にフォールバックします。
+`HIKIDASHI_MCP_PATH` はシェル環境で設定します（`.claude/settings.json` には書きません）。シェルの設定ファイルで export する形になるため、対話シェルを経由しない起動には届かず、その場合は注意文にフォールバックします。
 
 対応環境は Linux・WSL・macOS です。ネイティブ Windows には配布していません（配布は bash 版の `deploy.sh` のみで、PowerShell 版の導入スクリプトは MCP のみを扱います）。実行には bash・jq・GNU coreutils の `timeout`（macOS では Homebrew の `gtimeout`）が必要です。macOS では事前に `brew install jq coreutils` を実行してください。
 

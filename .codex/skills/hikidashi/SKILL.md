@@ -1,5 +1,5 @@
 ---
-name: shared-memory
+name: hikidashi
 description: Claude Code と Codex の通常の作業で共有メモリを読み書きする。ユーザーが覚えておいて、記録しておいて、前回の作業、共有メモリなどを求めたとき、または過去の設定・判断が現在の作業に影響するときに使う。
 ---
 
@@ -28,6 +28,6 @@ description: Claude Code と Codex の通常の作業で共有メモリを読み
 - `update_metadata`: 既存記憶のタグ・関連だけを本文を変えずに更新する。`memory_id` は必須、`tags`/`related` は省略可（両方省略はエラー）。既存記憶のタグを直すだけのときは、summary を再送する `write_memory` ではなくこちらを使う
 - `forget`: ユーザーが明示した記憶を archive へ移動。`memory_id` は `search`/`history`/`get_context` が返す `id`（`global/<slug>` や `projects/<project>/<slug>` などディレクトリ階層を含む形式）をそのまま渡す。ディレクトリを省いた裸のスラグは拒否される
 
-`write_memory` の日常保存では `session_id` を省略できる。`scope="project"` では `project_id` を指定する。`memory-extract` が元セッションから抽出するときだけ、元の `session_id` を必ず渡す。
+`write_memory` の日常保存では `session_id` を省略できる。`scope="project"` では `project_id` を指定する。`hikidashi-distill` が元セッションから抽出するときだけ、元の `session_id` を必ず渡す。
 
-保存形式、保存先、CLI フォールバック、接続設定は `$MEMORY_MCP_PATH/README.md` を参照する（基盤は別リポジトリ memory-mcp にあり、clone の位置を指す `MEMORY_MCP_PATH` が未設定の端末では参照できない）。MCP の起動・権限・保存エラーは `memory` スキルで診断する。
+保存形式、保存先、CLI フォールバック、接続設定は `$HIKIDASHI_MCP_PATH/README.md` を参照する（基盤は別リポジトリ hikidashi-mcp にあり、clone の位置を指す `HIKIDASHI_MCP_PATH` が未設定の端末では参照できない）。MCP の起動・権限・保存エラーは `hikidashi-doctor` スキルで診断する。

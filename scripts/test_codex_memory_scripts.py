@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """codex-memory-*.sh ラッパーの契約テスト（パス解決と CLI 呼び出し）。
 
-共有メモリの CLI は ~/.agents には無く、位置は環境変数 MEMORY_MCP_PATH だけで
+共有メモリの CLI は ~/.agents には無く、位置は環境変数 HIKIDASHI_MCP_PATH だけで
 決まる。テストはラッパーを一時ディレクトリへ複製し、偽の CLI ツリーと codex の
 スタブ、一時ディレクトリの HOME/TMPDIR を与えて実行する。実ストアのモジュール
 は import せず、標準ライブラリだけで動く。
@@ -43,6 +43,9 @@ SCRIPT_SOURCE_DIR = Path(os.environ.get("CODEX_MEMORY_SCRIPTS_DIR") or SCRIPTS_D
 REAL_DATA_DIRS = (
     REPO_ROOT / "memory" / "local",
     REPO_ROOT / "memory" / "vault",
+    REAL_HOME / "worktrees" / "github.com" / "s4kr4" / "hikidashi-mcp" / "local",
+    REAL_HOME / "worktrees" / "github.com" / "s4kr4" / "hikidashi-mcp" / "vault",
+    # 改名前の clone にも実データが残りうるため、旧配置も守る。
     REAL_HOME / "worktrees" / "github.com" / "s4kr4" / "memory-mcp" / "local",
     REAL_HOME / "worktrees" / "github.com" / "s4kr4" / "memory-mcp" / "vault",
     REAL_HOME / ".cache" / "llm-memory",
@@ -56,11 +59,13 @@ RUN_DEADLINE_SECONDS = 30.0
 SESSION_ID = "codex-test-session"
 CODEX_OUTPUT = "codex said something\nacross two lines"
 
-# CLI の位置は MEMORY_MCP_PATH だけで決まる。既定値やフォールバック探索を表す表現。
+# CLI の位置は HIKIDASHI_MCP_PATH だけで決まる。既定値やフォールバック探索を表す表現。
 FALLBACK_PATTERNS: tuple[tuple[str, str], ...] = (
-    ("memory-mcp の clone のハードコード", r"worktrees/github\.com/s4kr4/memory-mcp"),
+    ("hikidashi-mcp の clone のハードコード", r"worktrees/github\.com/s4kr4/hikidashi-mcp"),
     ("~/.agents/memory への参照", r"\.agents/memory"),
-    ("MEMORY_MCP_PATH の既定値", r"\$\{MEMORY_MCP_PATH:[-=][^}]"),
+    ("HIKIDASHI_MCP_PATH の既定値", r"\$\{HIKIDASHI_MCP_PATH:[-=][^}]"),
+    ("改名前の memory-mcp の clone のハードコード", r"worktrees/github\.com/s4kr4/memory-mcp"),
+    ("改名前の変数 MEMORY_MCP_PATH への参照", r"MEMORY_MCP_PATH"),
 )
 
 
@@ -188,7 +193,7 @@ class CodexScriptTestBase(unittest.TestCase):
         self.root = Path(temp.name).resolve()
         abort_if_unsafe_temp_root(self.root)
 
-        # ラッパーは自分の隣ではなく MEMORY_MCP_PATH に CLI を探す。それを
+        # ラッパーは自分の隣ではなく HIKIDASHI_MCP_PATH に CLI を探す。それを
         # 確かめるため、リポジトリとは無関係な場所に複製して実行する。
         self.repo_root = self.root / "repo"
         self.scripts_dir = self.repo_root / "scripts"
@@ -213,7 +218,7 @@ class CodexScriptTestBase(unittest.TestCase):
         self.call_log = self.root / "cli-calls.log"
         self.decoy_log = self.root / "decoy-calls.log"
         self.codex_log = self.root / "codex-calls.log"
-        self.cli_tree = self.make_cli_tree("memory-mcp")
+        self.cli_tree = self.make_cli_tree("hikidashi-mcp")
         self.python_stub = self.make_recording_stub("python-stub")
         self.codex_stub = self.bin_dir / "codex"
         self.write_executable(
@@ -236,7 +241,7 @@ class CodexScriptTestBase(unittest.TestCase):
         return path
 
     def make_cli_tree(self, name: str) -> Path:
-        """MEMORY_MCP_PATH が指しうる、正しい形の CLI ツリー。"""
+        """HIKIDASHI_MCP_PATH が指しうる、正しい形の CLI ツリー。"""
         tree = self.root / name
         tree.mkdir(parents=True)
         (tree / "memory.py").write_text("", encoding="utf-8")
@@ -266,7 +271,7 @@ class CodexScriptTestBase(unittest.TestCase):
         )
 
     def plant_decoys(self) -> dict[str, Path]:
-        """MEMORY_MCP_PATH 以外の場所に置いた、呼ばれてはならない CLI ツリー。
+        """HIKIDASHI_MCP_PATH 以外の場所に置いた、呼ばれてはならない CLI ツリー。
 
         ラッパーの隣・旧構成の ../memory・HOME 配下の 2 か所を覆う。``../memory``
         には旧 start/stop ラッパーのおとりも置き、run.sh が親を登らないことを
@@ -276,8 +281,8 @@ class CodexScriptTestBase(unittest.TestCase):
             "beside the wrappers": self.scripts_dir,
             "in the old memory directory": self.repo_root / "memory",
             "under the home directory": self.home / ".agents" / "memory",
-            "in the memory-mcp clone": (
-                self.home / "worktrees" / "github.com" / "s4kr4" / "memory-mcp"
+            "in the hikidashi-mcp clone": (
+                self.home / "worktrees" / "github.com" / "s4kr4" / "hikidashi-mcp"
             ),
         }
         for decoy in locations.values():
@@ -307,14 +312,14 @@ class CodexScriptTestBase(unittest.TestCase):
             )
         return locations
 
-    def unusable_memory_mcp_paths(self) -> list[tuple[str, str | None]]:
-        """MEMORY_MCP_PATH として受け付けてはならない値。"""
+    def unusable_hikidashi_mcp_paths(self) -> list[tuple[str, str | None]]:
+        """HIKIDASHI_MCP_PATH として受け付けてはならない値。"""
         broken = self.root / "broken"
         broken.mkdir()
 
         # 相対パスは、作業ディレクトリから解決すると正しいツリーになる形で置く。
         # 「存在するか」だけを見る実装がここで露見する。
-        relative_tree = self.workdir / "relative" / "memory-mcp"
+        relative_tree = self.workdir / "relative" / "hikidashi-mcp"
         relative_tree.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(self.cli_tree, relative_tree)
 
@@ -378,7 +383,7 @@ class CodexScriptTestBase(unittest.TestCase):
             "TMPDIR": str(self.tmpdir),
             "XDG_CONFIG_HOME": str(self.root / "xdg-config"),
             "XDG_CACHE_HOME": str(self.root / "xdg-cache"),
-            "MEMORY_MCP_PATH": str(self.cli_tree),
+            "HIKIDASHI_MCP_PATH": str(self.cli_tree),
             "TEST_CLI_CALL_LOG": str(self.call_log),
             "TEST_DECOY_CALL_LOG": str(self.decoy_log),
             "TEST_CODEX_CALL_LOG": str(self.codex_log),
@@ -418,12 +423,12 @@ class CodexScriptTestBase(unittest.TestCase):
         ]
         if not Path(cwd).resolve().is_relative_to(self.root):
             problems.append(f"cwd={cwd}")
-        # MEMORY_MCP_PATH は不正値のテストで存在しない値も取るため、実在する
+        # HIKIDASHI_MCP_PATH は不正値のテストで存在しない値も取るため、実在する
         # ディレクトリを指しているときだけツリー内であることを求める。
-        candidate = env.get("MEMORY_MCP_PATH", "")
+        candidate = env.get("HIKIDASHI_MCP_PATH", "")
         if candidate and os.path.isdir(candidate):
             if not Path(candidate).resolve().is_relative_to(self.root):
-                problems.append(f"MEMORY_MCP_PATH={candidate}")
+                problems.append(f"HIKIDASHI_MCP_PATH={candidate}")
         if env.get("HOME") and Path(env["HOME"]).resolve() == REAL_HOME:
             problems.append("HOME is the real home directory")
         if problems:
@@ -498,22 +503,22 @@ class CodexScriptTestBase(unittest.TestCase):
         return parse_calls(self.codex_log)
 
     def assert_used_cli_under(self, call: list[str], tree: Path, subcommand: str) -> None:
-        """CLI が MEMORY_MCP_PATH の run-python.sh と memory.py で動いたこと。"""
+        """CLI が HIKIDASHI_MCP_PATH の run-python.sh と memory.py で動いたこと。"""
         self.assertTrue(call, "the CLI was not invoked at all")
         self.assertEqual(Path(call[0]), tree / "run-python.sh")
         self.assertEqual(Path(call[1]), tree / "memory.py")
         self.assertEqual(call[2:3], [subcommand])
 
-    def assert_refused_for_memory_mcp_path(self, run: ScriptRun) -> None:
+    def assert_refused_for_hikidashi_mcp_path(self, run: ScriptRun) -> None:
         """環境変数が使えないときの共通の契約: exit 1 と、変数名を含むエラー。"""
         self.assertEqual(run.returncode, 1, f"stdout: {run.stdout!r} stderr: {run.stderr!r}")
-        self.assertIn("MEMORY_MCP_PATH", run.stderr)
+        self.assertIn("HIKIDASHI_MCP_PATH", run.stderr)
         self.assertEqual(self.cli_calls(), [])
         self.assertEqual(self.decoy_calls(), [])
 
 
 class TestCodexMemoryStart(CodexScriptTestBase):
-    def test_starts_the_session_through_the_cli_under_memory_mcp_path(self):
+    def test_starts_the_session_through_the_cli_under_hikidashi_mcp_path(self):
         # Act
         run = self.run_script([str(self.scripts_dir / START_SCRIPT), SESSION_ID])
 
@@ -560,20 +565,20 @@ class TestCodexMemoryStart(CodexScriptTestBase):
         self.assertEqual(option_value(calls[0], "--user-id"), "someone")
         self.assertEqual(option_value(calls[0], "--client"), "another-client")
 
-    def test_accepts_a_trailing_slash_and_spaces_in_memory_mcp_path(self):
-        spaced = self.make_cli_tree("memory mcp with spaces")
+    def test_accepts_a_trailing_slash_and_spaces_in_hikidashi_mcp_path(self):
+        spaced = self.make_cli_tree("hikidashi mcp with spaces")
         for label, value, tree in (
             ("trailing slash", f"{self.cli_tree}/", self.cli_tree),
             ("spaces", str(spaced), spaced),
         ):
-            with self.subTest(memory_mcp_path=label):
+            with self.subTest(hikidashi_mcp_path=label):
                 # Arrange
                 self.call_log.write_text("", encoding="utf-8")
 
                 # Act
                 run = self.run_script(
                     [str(self.scripts_dir / START_SCRIPT), SESSION_ID],
-                    env=self.script_env(MEMORY_MCP_PATH=value),
+                    env=self.script_env(HIKIDASHI_MCP_PATH=value),
                 )
 
                 # Assert
@@ -582,12 +587,12 @@ class TestCodexMemoryStart(CodexScriptTestBase):
                 self.assertEqual(len(calls), 1, calls)
                 self.assert_used_cli_under(calls[0], tree, "start-session")
 
-    def test_reports_the_variable_and_calls_nothing_when_memory_mcp_path_is_unusable(self):
+    def test_reports_the_variable_and_calls_nothing_when_hikidashi_mcp_path_is_unusable(self):
         # Arrange
         self.plant_decoys()
 
-        for label, value in self.unusable_memory_mcp_paths():
-            with self.subTest(memory_mcp_path=label):
+        for label, value in self.unusable_hikidashi_mcp_paths():
+            with self.subTest(hikidashi_mcp_path=label):
                 # Arrange
                 self.call_log.write_text("", encoding="utf-8")
                 self.decoy_log.write_text("", encoding="utf-8")
@@ -595,15 +600,15 @@ class TestCodexMemoryStart(CodexScriptTestBase):
                 # Act
                 run = self.run_script(
                     [str(self.scripts_dir / START_SCRIPT), SESSION_ID],
-                    env=self.script_env(MEMORY_MCP_PATH=value),
+                    env=self.script_env(HIKIDASHI_MCP_PATH=value),
                 )
 
                 # Assert
-                self.assert_refused_for_memory_mcp_path(run)
+                self.assert_refused_for_hikidashi_mcp_path(run)
 
 
 class TestCodexMemoryStop(CodexScriptTestBase):
-    def test_ends_the_session_through_the_cli_under_memory_mcp_path(self):
+    def test_ends_the_session_through_the_cli_under_hikidashi_mcp_path(self):
         # Act
         run = self.run_script([str(self.scripts_dir / STOP_SCRIPT), SESSION_ID])
 
@@ -654,12 +659,12 @@ class TestCodexMemoryStop(CodexScriptTestBase):
         self.assertIn("usage:", run.stderr)
         self.assertEqual(self.cli_calls(), [])
 
-    def test_reports_the_variable_and_calls_nothing_when_memory_mcp_path_is_unusable(self):
+    def test_reports_the_variable_and_calls_nothing_when_hikidashi_mcp_path_is_unusable(self):
         # Arrange
         self.plant_decoys()
 
-        for label, value in self.unusable_memory_mcp_paths():
-            with self.subTest(memory_mcp_path=label):
+        for label, value in self.unusable_hikidashi_mcp_paths():
+            with self.subTest(hikidashi_mcp_path=label):
                 # Arrange
                 self.call_log.write_text("", encoding="utf-8")
                 self.decoy_log.write_text("", encoding="utf-8")
@@ -667,16 +672,16 @@ class TestCodexMemoryStop(CodexScriptTestBase):
                 # Act
                 run = self.run_script(
                     [str(self.scripts_dir / STOP_SCRIPT), SESSION_ID],
-                    env=self.script_env(MEMORY_MCP_PATH=value),
+                    env=self.script_env(HIKIDASHI_MCP_PATH=value),
                 )
 
                 # Assert
-                self.assert_refused_for_memory_mcp_path(run)
+                self.assert_refused_for_hikidashi_mcp_path(run)
 
     def test_checks_the_arguments_before_the_environment_variable(self):
         # Act
         run = self.run_script(
-            [str(self.scripts_dir / STOP_SCRIPT)], env=self.script_env(MEMORY_MCP_PATH=None)
+            [str(self.scripts_dir / STOP_SCRIPT)], env=self.script_env(HIKIDASHI_MCP_PATH=None)
         )
 
         # Assert
@@ -686,7 +691,7 @@ class TestCodexMemoryStop(CodexScriptTestBase):
 
 
 class TestCodexMemoryLog(CodexScriptTestBase):
-    def test_appends_the_event_through_the_cli_under_memory_mcp_path(self):
+    def test_appends_the_event_through_the_cli_under_hikidashi_mcp_path(self):
         # Act
         run = self.run_script(
             [str(self.scripts_dir / LOG_SCRIPT), SESSION_ID, "user", "message", "本文", "0.8"]
@@ -741,12 +746,12 @@ class TestCodexMemoryLog(CodexScriptTestBase):
         self.assertIn("usage:", run.stderr)
         self.assertEqual(self.cli_calls(), [])
 
-    def test_reports_the_variable_and_calls_nothing_when_memory_mcp_path_is_unusable(self):
+    def test_reports_the_variable_and_calls_nothing_when_hikidashi_mcp_path_is_unusable(self):
         # Arrange
         self.plant_decoys()
 
-        for label, value in self.unusable_memory_mcp_paths():
-            with self.subTest(memory_mcp_path=label):
+        for label, value in self.unusable_hikidashi_mcp_paths():
+            with self.subTest(hikidashi_mcp_path=label):
                 # Arrange
                 self.call_log.write_text("", encoding="utf-8")
                 self.decoy_log.write_text("", encoding="utf-8")
@@ -754,17 +759,17 @@ class TestCodexMemoryLog(CodexScriptTestBase):
                 # Act
                 run = self.run_script(
                     [str(self.scripts_dir / LOG_SCRIPT), SESSION_ID, "user", "message", "本文"],
-                    env=self.script_env(MEMORY_MCP_PATH=value),
+                    env=self.script_env(HIKIDASHI_MCP_PATH=value),
                 )
 
                 # Assert
-                self.assert_refused_for_memory_mcp_path(run)
+                self.assert_refused_for_hikidashi_mcp_path(run)
 
     def test_checks_the_arguments_before_the_environment_variable(self):
         # Act
         run = self.run_script(
             [str(self.scripts_dir / LOG_SCRIPT), SESSION_ID, "user"],
-            env=self.script_env(MEMORY_MCP_PATH=None),
+            env=self.script_env(HIKIDASHI_MCP_PATH=None),
         )
 
         # Assert
@@ -865,8 +870,8 @@ class TestCodexMemoryRun(CodexScriptTestBase):
         # Arrange
         self.plant_decoys()
 
-        for label, value in self.unusable_memory_mcp_paths():
-            with self.subTest(memory_mcp_path=label):
+        for label, value in self.unusable_hikidashi_mcp_paths():
+            with self.subTest(hikidashi_mcp_path=label):
                 # Arrange
                 self.call_log.write_text("", encoding="utf-8")
                 self.decoy_log.write_text("", encoding="utf-8")
@@ -875,29 +880,29 @@ class TestCodexMemoryRun(CodexScriptTestBase):
                 # Act: run_script が TMPDIR に残骸が無いことも確かめる。
                 run = self.run_wrapper(
                     env=self.script_env(
-                        LLM_MEMORY_SESSION_ID=SESSION_ID, MEMORY_MCP_PATH=value
+                        LLM_MEMORY_SESSION_ID=SESSION_ID, HIKIDASHI_MCP_PATH=value
                     )
                 )
 
                 # Assert
-                self.assert_refused_for_memory_mcp_path(run)
+                self.assert_refused_for_hikidashi_mcp_path(run)
                 self.assertEqual(self.codex_calls(), [], "codex must not be started")
                 self.assertEqual(
-                    run.stderr.count("MEMORY_MCP_PATH"),
+                    run.stderr.count("HIKIDASHI_MCP_PATH"),
                     1,
                     f"the error must be reported once: {run.stderr!r}",
                 )
 
     def test_checks_the_environment_variable_before_creating_a_temporary_file(self):
         # Arrange: 一時ファイルを作れない TMPDIR。環境変数の検査が mktemp より
-        # 後ろにあると、報告されるのは MEMORY_MCP_PATH ではなく mktemp の失敗に
+        # 後ろにあると、報告されるのは HIKIDASHI_MCP_PATH ではなく mktemp の失敗に
         # なる。run.sh 自身の検査が欠けている場合も同じ形で露見する: start.sh の
         # 検査は mktemp より後ろで走るため、ここでは代わりを務められない。
         self.plant_decoys()
         unusable_tmpdir = self.root / "missing-tmpdir"
 
-        for label, value in self.unusable_memory_mcp_paths():
-            with self.subTest(memory_mcp_path=label):
+        for label, value in self.unusable_hikidashi_mcp_paths():
+            with self.subTest(hikidashi_mcp_path=label):
                 # Arrange
                 self.call_log.write_text("", encoding="utf-8")
                 self.decoy_log.write_text("", encoding="utf-8")
@@ -907,16 +912,16 @@ class TestCodexMemoryRun(CodexScriptTestBase):
                 run = self.run_wrapper(
                     env=self.script_env(
                         LLM_MEMORY_SESSION_ID=SESSION_ID,
-                        MEMORY_MCP_PATH=value,
+                        HIKIDASHI_MCP_PATH=value,
                         TMPDIR=str(unusable_tmpdir),
                     )
                 )
 
                 # Assert
-                self.assert_refused_for_memory_mcp_path(run)
+                self.assert_refused_for_hikidashi_mcp_path(run)
                 self.assertEqual(self.codex_calls(), [], "codex must not be started")
                 self.assertEqual(
-                    run.stderr.count("MEMORY_MCP_PATH"),
+                    run.stderr.count("HIKIDASHI_MCP_PATH"),
                     1,
                     f"the error must be reported once: {run.stderr!r}",
                 )

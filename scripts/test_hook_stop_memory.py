@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """hook-stop-memory.sh（セッションを記録する Stop フック）の契約テスト。
 
-共有メモリの CLI は ~/.agents には無く、位置は環境変数 MEMORY_MCP_PATH だけで
+共有メモリの CLI は ~/.agents には無く、位置は環境変数 HIKIDASHI_MCP_PATH だけで
 決まる。テストは偽の CLI ツリー（run-python.sh と memory.py）を一時ディレクトリ
 に作り、HOME・TMPDIR も一時ディレクトリへ差し替えて実行する。実ストアの
 モジュールは import せず、標準ライブラリだけで動く。
@@ -41,6 +41,9 @@ HOOK_UNDER_TEST = Path(
 REAL_DATA_DIRS = (
     REPO_ROOT / "memory" / "local",
     REPO_ROOT / "memory" / "vault",
+    REAL_HOME / "worktrees" / "github.com" / "s4kr4" / "hikidashi-mcp" / "local",
+    REAL_HOME / "worktrees" / "github.com" / "s4kr4" / "hikidashi-mcp" / "vault",
+    # 改名前の clone にも実データが残りうるため、旧配置も守る。
     REAL_HOME / "worktrees" / "github.com" / "s4kr4" / "memory-mcp" / "local",
     REAL_HOME / "worktrees" / "github.com" / "s4kr4" / "memory-mcp" / "vault",
     REAL_HOME / ".cache" / "llm-memory",
@@ -54,11 +57,13 @@ RUN_DEADLINE_SECONDS = 30.0
 SESSION_ID = "claude-test-session"
 JQ_PATH = shutil.which("jq")
 
-# CLI の位置は MEMORY_MCP_PATH だけで決まる。既定値やフォールバック探索を表す表現。
+# CLI の位置は HIKIDASHI_MCP_PATH だけで決まる。既定値やフォールバック探索を表す表現。
 FALLBACK_PATTERNS: tuple[tuple[str, str], ...] = (
-    ("memory-mcp の clone のハードコード", r"worktrees/github\.com/s4kr4/memory-mcp"),
+    ("hikidashi-mcp の clone のハードコード", r"worktrees/github\.com/s4kr4/hikidashi-mcp"),
     ("~/.agents/memory への参照", r"\.agents/memory"),
-    ("MEMORY_MCP_PATH の既定値", r"\$\{MEMORY_MCP_PATH:[-=][^}]"),
+    ("HIKIDASHI_MCP_PATH の既定値", r"\$\{HIKIDASHI_MCP_PATH:[-=][^}]"),
+    ("改名前の memory-mcp の clone のハードコード", r"worktrees/github\.com/s4kr4/memory-mcp"),
+    ("改名前の変数 MEMORY_MCP_PATH への参照", r"MEMORY_MCP_PATH"),
 )
 
 
@@ -187,7 +192,7 @@ class HookStopMemoryTestBase(unittest.TestCase):
         self.root = Path(temp.name).resolve()
         abort_if_unsafe_temp_root(self.root)
 
-        # フックは自分の隣ではなく MEMORY_MCP_PATH を見る。それを確かめるため、
+        # フックは自分の隣ではなく HIKIDASHI_MCP_PATH を見る。それを確かめるため、
         # 本体はリポジトリとは無関係な場所に複製して実行する。
         self.hook = self.root / "repo" / ".claude" / "scripts" / HOOK_NAME
         self.hook.parent.mkdir(parents=True)
@@ -209,7 +214,7 @@ class HookStopMemoryTestBase(unittest.TestCase):
 
         self.call_log = self.root / "cli-calls.log"
         self.decoy_log = self.root / "decoy-calls.log"
-        self.cli_tree = self.make_cli_tree("memory-mcp")
+        self.cli_tree = self.make_cli_tree("hikidashi-mcp")
         self.python_stub = self.make_interpreter_stub("python-stub", "exit 0")
         self.transcript = self.root / "transcript.jsonl"
 
@@ -222,7 +227,7 @@ class HookStopMemoryTestBase(unittest.TestCase):
         return path
 
     def make_cli_tree(self, name: str) -> Path:
-        """MEMORY_MCP_PATH が指しうる、正しい形の CLI ツリー。"""
+        """HIKIDASHI_MCP_PATH が指しうる、正しい形の CLI ツリー。"""
         tree = self.root / name
         tree.mkdir(parents=True)
         (tree / "memory.py").write_text("", encoding="utf-8")
@@ -273,12 +278,12 @@ class HookStopMemoryTestBase(unittest.TestCase):
         self.transcript.write_text("".join(line + "\n" for line in lines), encoding="utf-8")
 
     def plant_decoys(self) -> dict[str, Path]:
-        """MEMORY_MCP_PATH 以外の場所に置いた、呼ばれてはならない CLI ツリー。"""
+        """HIKIDASHI_MCP_PATH 以外の場所に置いた、呼ばれてはならない CLI ツリー。"""
         locations = {
             "beside the hook": self.hook.parent,
             "under the home directory": self.home / ".agents" / "memory",
-            "in the memory-mcp clone": (
-                self.home / "worktrees" / "github.com" / "s4kr4" / "memory-mcp"
+            "in the hikidashi-mcp clone": (
+                self.home / "worktrees" / "github.com" / "s4kr4" / "hikidashi-mcp"
             ),
         }
         for decoy in locations.values():
@@ -296,14 +301,14 @@ class HookStopMemoryTestBase(unittest.TestCase):
             )
         return locations
 
-    def unusable_memory_mcp_paths(self) -> list[tuple[str, str | None]]:
-        """MEMORY_MCP_PATH として受け付けてはならない値。"""
+    def unusable_hikidashi_mcp_paths(self) -> list[tuple[str, str | None]]:
+        """HIKIDASHI_MCP_PATH として受け付けてはならない値。"""
         broken = self.root / "broken"
         broken.mkdir()
 
         # 相対パスは、作業ディレクトリから解決すると正しいツリーになる形で置く。
         # 「存在するか」だけを見る実装がここで露見する。
-        relative_tree = self.workdir / "relative" / "memory-mcp"
+        relative_tree = self.workdir / "relative" / "hikidashi-mcp"
         relative_tree.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(self.cli_tree, relative_tree)
 
@@ -367,7 +372,7 @@ class HookStopMemoryTestBase(unittest.TestCase):
             "TMPDIR": str(self.tmpdir),
             "XDG_CONFIG_HOME": str(self.root / "xdg-config"),
             "XDG_CACHE_HOME": str(self.root / "xdg-cache"),
-            "MEMORY_MCP_PATH": str(self.cli_tree),
+            "HIKIDASHI_MCP_PATH": str(self.cli_tree),
             "TEST_CLI_CALL_LOG": str(self.call_log),
             "TEST_DECOY_CALL_LOG": str(self.decoy_log),
             "LLM_MEMORY_PYTHON": str(self.python_stub),
@@ -405,12 +410,12 @@ class HookStopMemoryTestBase(unittest.TestCase):
         ]
         if not Path(cwd).resolve().is_relative_to(self.root):
             problems.append(f"cwd={cwd}")
-        # MEMORY_MCP_PATH は不正値のテストで存在しない値も取るため、実在する
+        # HIKIDASHI_MCP_PATH は不正値のテストで存在しない値も取るため、実在する
         # ディレクトリを指しているときだけツリー内であることを求める。
-        candidate = env.get("MEMORY_MCP_PATH", "")
+        candidate = env.get("HIKIDASHI_MCP_PATH", "")
         if candidate and os.path.isdir(candidate):
             if not Path(candidate).resolve().is_relative_to(self.root):
-                problems.append(f"MEMORY_MCP_PATH={candidate}")
+                problems.append(f"HIKIDASHI_MCP_PATH={candidate}")
         if env.get("HOME") and Path(env["HOME"]).resolve() == REAL_HOME:
             problems.append("HOME is the real home directory")
         if problems:
@@ -499,7 +504,7 @@ class HookStopMemoryTestBase(unittest.TestCase):
 
 
 class TestHookRecordsSession(HookStopMemoryTestBase):
-    def test_records_the_session_through_the_cli_under_memory_mcp_path(self):
+    def test_records_the_session_through_the_cli_under_hikidashi_mcp_path(self):
         # Arrange
         user_text = "最初の行\n二行目"
         assistant_text = "アシスタントの返答"
@@ -542,12 +547,12 @@ class TestHookRecordsSession(HookStopMemoryTestBase):
         self.assertIn("--extract", calls[3])
         self.assertIn("--consolidate", calls[3])
 
-    def test_accepts_a_trailing_slash_in_memory_mcp_path(self):
+    def test_accepts_a_trailing_slash_in_hikidashi_mcp_path(self):
         # Arrange
         self.write_transcript([transcript_line("user", "ユーザーの発言")])
 
         # Act
-        run = self.run_hook(env=self.hook_env(MEMORY_MCP_PATH=f"{self.cli_tree}/"))
+        run = self.run_hook(env=self.hook_env(HIKIDASHI_MCP_PATH=f"{self.cli_tree}/"))
 
         # Assert
         self.assert_finished_silently(run)
@@ -556,13 +561,13 @@ class TestHookRecordsSession(HookStopMemoryTestBase):
         for call in calls:
             self.assertEqual(Path(call[1]), self.cli_tree / "memory.py")
 
-    def test_accepts_a_memory_mcp_path_containing_spaces(self):
+    def test_accepts_a_hikidashi_mcp_path_containing_spaces(self):
         # Arrange
-        spaced = self.make_cli_tree("memory mcp with spaces")
+        spaced = self.make_cli_tree("hikidashi mcp with spaces")
         self.write_transcript([transcript_line("user", "ユーザーの発言")])
 
         # Act
-        run = self.run_hook(env=self.hook_env(MEMORY_MCP_PATH=str(spaced)))
+        run = self.run_hook(env=self.hook_env(HIKIDASHI_MCP_PATH=str(spaced)))
 
         # Assert
         self.assert_finished_silently(run)
@@ -682,7 +687,7 @@ class TestHookStaysOutOfTheWay(HookStopMemoryTestBase):
         # Assert
         self.assert_finished_silently(run)
 
-    def test_finishes_silently_without_running_any_cli_when_memory_mcp_path_is_unusable(self):
+    def test_finishes_silently_without_running_any_cli_when_hikidashi_mcp_path_is_unusable(self):
         # Arrange
         decoys = self.plant_decoys()
         self.write_transcript(
@@ -692,14 +697,14 @@ class TestHookStaysOutOfTheWay(HookStopMemoryTestBase):
             ]
         )
 
-        for label, value in self.unusable_memory_mcp_paths():
-            with self.subTest(memory_mcp_path=label):
+        for label, value in self.unusable_hikidashi_mcp_paths():
+            with self.subTest(hikidashi_mcp_path=label):
                 # Arrange
                 self.call_log.write_text("", encoding="utf-8")
                 self.decoy_log.write_text("", encoding="utf-8")
 
                 # Act
-                run = self.run_hook(env=self.hook_env(MEMORY_MCP_PATH=value))
+                run = self.run_hook(env=self.hook_env(HIKIDASHI_MCP_PATH=value))
 
                 # Assert: queue へのフォールバックも含め、CLI は一度も呼ばれない。
                 self.assert_finished_silently(run)

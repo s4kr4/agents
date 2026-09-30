@@ -1,17 +1,17 @@
 ---
-name: memory
-description: 共有メモリ基盤の設定・構成・障害診断・復旧を扱う。保存されない、MCP が起動しない、検索結果や同期に問題がある、memory.py や保存先を変更したい場合に使う。日常の読み書きは shared-memory、セッション抽出は memory-extract を使う。
+name: hikidashi-doctor
+description: 共有メモリ基盤の設定・構成・障害診断・復旧を扱う。保存されない、MCP が起動しない、検索結果や同期に問題がある、memory.py や保存先を変更したい場合に使う。日常の読み書きは hikidashi、セッション抽出は hikidashi-distill を使う。
 ---
 
 # Memory
 
 共有メモリ基盤の運用スキル。日常の読み書きやセッションからの抽出を自分で実行するスキルではなく、設定・実装・障害を調べるときに使う。
 
-基盤の実装（CLI・MCP サーバー・ドキュメント・検査スクリプト）は別リポジトリ memory-mcp にあり、その clone の位置は環境変数 `MEMORY_MCP_PATH` で解決する。`MEMORY_MCP_PATH` が未設定の端末では以下の `$MEMORY_MCP_PATH/...` を参照できないため、まず設定の有無を確認する。
+基盤の実装（CLI・MCP サーバー・ドキュメント・検査スクリプト）は別リポジトリ hikidashi-mcp にあり、その clone の位置は環境変数 `HIKIDASHI_MCP_PATH` で解決する。`HIKIDASHI_MCP_PATH` が未設定の端末では以下の `$HIKIDASHI_MCP_PATH/...` を参照できないため、まず設定の有無を確認する。
 
 ## 責務
 
-- `$MEMORY_MCP_PATH/README.md` と `$MEMORY_MCP_PATH/DETAILS.md` を正本として、MCP・CLI・保存先の構成を確認する
+- `$HIKIDASHI_MCP_PATH/README.md` と `$HIKIDASHI_MCP_PATH/DETAILS.md` を正本として、MCP・CLI・保存先の構成を確認する
 - `LLM_MEMORY_CONFIG`、`LLM_MEMORY_VAULT`、`LLM_MEMORY_LOCAL_DIR`、`LLM_MEMORY_QUEUE_DIR` の解決結果を確認する
 - MCP の起動失敗、接続失敗、権限・承認エラー、保存先の I/O エラーを原因別に切り分ける
 - CLI と MCP が同じ明示設定・同じ Vault を使っていることを確認する
@@ -21,8 +21,8 @@ description: 共有メモリ基盤の設定・構成・障害診断・復旧を�
 
 ## 境界
 
-- 通常の `get_context`、`search`、`history`、`write_memory`、`forget` は `shared-memory` を使う
-- セッションの `list_unextracted` → 抽出 → `mark_extracted` は `memory-extract` を使う
+- 通常の `get_context`、`search`、`history`、`write_memory`、`forget` は `hikidashi` を使う
+- セッションの `list_unextracted` → 抽出 → `mark_extracted` は `hikidashi-distill` を使う
 - MCP が使えないときに CLI へ迂回する場合も、同じ明示設定を確認する。設定エラー・権限エラーを別 Vault で隠さない
 
 ## 試験時の保存先隔離
@@ -32,11 +32,11 @@ description: 共有メモリ基盤の設定・構成・障害診断・復旧を�
 - `LLM_MEMORY_VAULT`、`LLM_MEMORY_LOCAL_DIR`、`LLM_MEMORY_QUEUE_DIR`、`LLM_MEMORY_CONFIG` の 4 変数をすべて `env VAR=...` で一時ディレクトリへ明示上書きしてから実行する。環境変数は `config.toml` より優先されるため、設定ファイルの差し替えだけでは隔離できない
 - 実行前に `env | grep LLM_MEMORY` で環境側の値を確認し、書き込み前に `search` で一時 Vault が空であることを確かめる
 - 検証後に実 Vault のファイル一覧と `_index.md` のチェックサムが不変であることを確認する
-- 隔離の参照実装は `$MEMORY_MCP_PATH/scripts/memory-mcp-check.sh`
+- 隔離の参照実装は `$HIKIDASHI_MCP_PATH/scripts/hikidashi-mcp-check.sh`
 
 ## 診断の順序
 
-1. `codex mcp get shared-memory` または `claude mcp list` で登録と接続状態を確認する
+1. `codex mcp get hikidashi` または `claude mcp list` で登録と接続状態を確認する
 2. MCP 登録の command、args、環境変数、実行ファイルの絶対パスを確認する
 3. Vault が明示され、設定ファイルの構文・型・権限に問題がないことを確認する
 4. Codex は `approval_policy` と MCP の `default_tools_approval_mode`、Claude Code は MCP 登録と `permissions.defaultMode` を確認する
@@ -45,4 +45,4 @@ description: 共有メモリ基盤の設定・構成・障害診断・復旧を�
 
 同一端末のプロセス間ロックは端末内の競合だけを扱う。Syncthing や Obsidian による別端末・手動編集の競合は別途確認し、競合ファイルを無断で削除しない。
 
-詳細な保存形式、競合、復旧手順、CLI は `$MEMORY_MCP_PATH/DETAILS.md` と `$MEMORY_MCP_PATH/README.md` を参照する。
+詳細な保存形式、競合、復旧手順、CLI は `$HIKIDASHI_MCP_PATH/DETAILS.md` と `$HIKIDASHI_MCP_PATH/README.md` を参照する。
