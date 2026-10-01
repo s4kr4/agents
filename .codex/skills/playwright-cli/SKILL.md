@@ -284,7 +284,8 @@ npm install -g @playwright/cli@latest
 
 If the `playwright-cli` command is not found, do not attempt to install it yourself — ask the user to run the global install command above, then retry.
 
-> **Note on npx**: A local/npx fallback (`npx playwright-cli ...`) works only in environments where `Bash(npx *)` is permitted. This repository's `.claude/settings.json` denies `npx`, so the npx fallback cannot be used here.
+> [!NOTE]
+> A local/npx fallback (`npx playwright-cli ...`) works only in environments where `Bash(npx *)` is permitted. This repository's `.claude/settings.json` denies `npx`, so the npx fallback cannot be used here.
 
 ## Example: Form submission
 

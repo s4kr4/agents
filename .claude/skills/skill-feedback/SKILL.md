@@ -15,6 +15,7 @@ description: スキルに対するフィードバックを収集・保存する�
 手動トリガーモードは以下の手順で行う。
 オーケストレーターモードは「オーケストレーターモード」章を参照する。
 
+> [!NOTE]
 > **自動収集ファイルについて**: Stop フックによる自動収集ファイルには、手動収集ファイルに加えて `session_id` と `auto_generated: true` フィールドが含まれます。自動収集ファイルは良かった点・問題点・改善提案が空欄のまま保存されることがあります。`skill-improve` で分析する際、実質的な内容のない自動収集ファイルは読み飛ばして問題ありません。
 > また、`has_signals: true` が付いていても、「不満・やり直しシグナル」欄にスキル本文の断片や Skill 呼び出しテキストが混入した誤検出の場合がある。分析時はシグナル欄の内容が実際のユーザーの不満・訂正・やり直し指示であるかを精査し、誤検出であれば実質件数に数えない。
 
@@ -28,13 +29,15 @@ description: スキルに対するフィードバックを収集・保存する�
 
 `$ARGUMENTS` から対象スキル名を取得する。未指定の場合は、以下のようにユーザーに確認する。
 
-> どのスキルに対するフィードバックを記録しますか？（例: `tdd`, `ts-implement`）
+```text
+どのスキルに対するフィードバックを記録しますか？（例: `tdd`, `ts-implement`）
+```
 
-> **対象外スキルについて**: 以下に該当するスキルは処理をスキップし、feedback ファイルを作成しない。
-> - スキル名にコロン (`:`) を含む（plugin skill: `codex:setup` など）
-> - `~/.claude/skills/<name>/SKILL.md` および `{cwd}/.claude/skills/<name>/SKILL.md` のいずれも存在しない（Claude Code 組み込み skill: `update-config`, `review`, `init` など）
->
-> これらは SKILL.md がユーザー領域にないため改善対象にならず、ノイズになるため除外する。
+**対象外スキルについて**: 以下に該当するスキルは処理をスキップし、feedback ファイルを作成しない。
+- スキル名にコロン (`:`) を含む（plugin skill: `codex:setup` など）
+- `~/.claude/skills/<name>/SKILL.md` および `{cwd}/.claude/skills/<name>/SKILL.md` のいずれも存在しない（Claude Code 組み込み skill: `update-config`, `review`, `init` など）
+
+これらは SKILL.md がユーザー領域にないため改善対象にならず、ノイズになるため除外する。
 
 ### 2. セッション分析・フィードバック生成
 
@@ -69,6 +72,7 @@ description: スキルに対するフィードバックを収集・保存する�
 - `{cwd}/.claude/skills/{target-skill}/SKILL.md` が存在する場合（プロジェクトスキル）→ `{cwd}/.claude/skills/{target-skill}/feedback/YYYY-MM-DD-{連番}.md`
 - 存在しない場合（グローバルスキルのみ）→ `~/.claude/skills/{target-skill}/feedback/YYYY-MM-DD-{連番}.md`
 
+> [!NOTE]
 > ここでの `{cwd}` はスキル実行時の作業ディレクトリ（プロジェクトルート）を指す。グローバルスキルのフィードバックを作業中プロジェクト配下に書かないことで、プロジェクトを汚さないようにする。
 
 連番の決定方法:
