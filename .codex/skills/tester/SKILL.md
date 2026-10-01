@@ -55,8 +55,8 @@ description: Test-first specialist for any domain (backend API, frontend UI, CLI
 | -------------------------------------- | --------------------------- |
 | バックエンド API（REST / GraphQL）     | `/api-test`                 |
 | フロントエンド UI（React）             | `/ui-test`                  |
-| CLI・スクリプト・ライブラリ（Python）  | `/py-implement` のテスト規約 |
-| CLI・スクリプト・ライブラリ（TS/Node） | `/ts-implement` のテスト規約 |
+| CLI・スクリプト・ライブラリ（Python）  | `/py-implement`（言語規約をテストコードにも適用。テスト固有の規約は `/tdd` の「📝 テスト命名規約」と既存テストに従う） |
+| CLI・スクリプト・ライブラリ（TS/Node） | `/ts-implement`（同上） |
 | シェルスクリプト                       | `/sh-implement` の「🧪 テスト」。併せて `/adversarial-testing` の「🔒 隔離テスト環境の設計指針」を適用する |
 
 ## 🔧 使用ツール
