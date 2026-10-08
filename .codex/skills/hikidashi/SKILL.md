@@ -22,11 +22,11 @@ description: Claude Code と Codex の通常の作業で共有メモリを読み
 - `get_context`: 現在の応答に使う文脈を取得
 - `search`: 現行記憶を検索。`tags` を渡すと、指定した全タグを持つ記憶だけに絞り込む（AND）
 - `history`: 記憶・セッション・イベントの経緯を検索
-- `write_memory`: 確認済みの知見を保存。`tags`（タグのリスト）・`related`（関連記憶の `id` のリスト）を任意で指定できる。省略時は既存のタグ・関連を維持し、空リスト `[]` を渡すと全消去する
+- `write_memory`: 確認済みの知見を保存。`tags`（タグのリスト）・`related`（関連記憶の `id` のリスト）を任意で指定できる。省略時は既存のタグ・関連を維持し、空リスト `[]` を渡すと全消去する。`directory`（`global`・`project` のみ、`/` 区切りで最大3階層）を指定すると、`memory/global/philosophy/<slug>.md` のようなサブフォルダに分類して保存する。directory は記憶の同一性に含まれるため、既存の記憶を更新するときは、その `id` に含まれるサブフォルダと同じ directory を渡す（省略すると別の記憶として作られる）
 - `related`: 指定した記憶に共有タグ・明示リンクで関連する記憶を探す。各ヒットに `score`・`matched_tags`・`link`（`outgoing`/`incoming`/`mutual`/`none`）が付き、参照先が撤回済みの場合は `dangling` に分離される
 - `list_tags`: 既存のタグと件数を件数降順で取得する
 - `update_metadata`: 既存記憶のタグ・関連だけを本文を変えずに更新する。`memory_id` は必須、`tags`/`related` は省略可（両方省略はエラー）。既存記憶のタグを直すだけのときは、summary を再送する `write_memory` ではなくこちらを使う
-- `forget`: ユーザーが明示した記憶を archive へ移動。`memory_id` は `search`/`history`/`get_context` が返す `id`（`global/<slug>` や `projects/<project>/<slug>` などディレクトリ階層を含む形式）をそのまま渡す。ディレクトリを省いた裸のスラグは拒否される
+- `forget`: ユーザーが明示した記憶を archive へ移動。`memory_id` は `search`/`history`/`get_context` が返す `id`（`global/<slug>`、`global/philosophy/<slug>`、`projects/<project>/<slug>` などディレクトリ階層を含む形式）をそのまま渡す。ディレクトリを省いた裸のスラグは拒否される
 
 `write_memory` の日常保存では `session_id` を省略できる。`scope="project"` では `project_id` を指定する。`hikidashi-distill` が元セッションから抽出するときだけ、元の `session_id` を必ず渡す。
 
