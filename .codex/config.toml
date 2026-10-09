@@ -6,7 +6,6 @@ default_permissions = "project-edit"
 project_doc_fallback_filenames = ["CLAUDE.md"]
 project_doc_max_bytes = 65536
 model_verbosity = "medium"
-vim_mode_default = true
 
 [permissions.project-edit]
 description = "Workspace editing with Claude-compatible secret-file denials"
@@ -40,6 +39,7 @@ multi_agent = true
 [tui]
 notifications = ["agent-turn-complete", "approval-requested"]
 notification_condition = "always"
+vim_mode_default = true
 
 [projects."/home/s4kr4/.agents"]
 trust_level = "trusted"
