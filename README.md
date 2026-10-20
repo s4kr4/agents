@@ -11,7 +11,7 @@ Claude Code のグローバル設定を管理するリポジトリです。
 ```
 .
 ├── .claude/
-│   ├── CLAUDE.md          # グローバル開発ガイドライン
+│   ├── AGENTS.md          # グローバル開発ガイドライン（~/.claude/CLAUDE.md として展開）
 │   ├── settings.json      # Claude Code 設定
 │   ├── agents/            # カスタムサブエージェント定義
 │   ├── skills/            # カスタムスキル定義

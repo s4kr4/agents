@@ -23,7 +23,8 @@ echo "==> Deploying Claude Code config..."
 mkdir -p "$HOME/.claude"
 
 # Files
-link_file "$AGENTSPATH/.claude/CLAUDE.md"      "$HOME/.claude/CLAUDE.md"
+# Claude Code reads only ~/.claude/CLAUDE.md at user scope, so the link keeps that name.
+link_file "$AGENTSPATH/.claude/AGENTS.md"      "$HOME/.claude/CLAUDE.md"
 link_file "$AGENTSPATH/.claude/settings.json"  "$HOME/.claude/settings.json"
 
 # Directories

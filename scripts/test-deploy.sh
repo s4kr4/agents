@@ -145,7 +145,7 @@ mkdir -p \
     "$agents_stub/.codex/skills/beta-skill" \
     "$agents_stub/scripts"
 
-printf 'stub CLAUDE.md\n'      > "$agents_stub/.claude/CLAUDE.md"
+printf 'stub AGENTS.md\n'      > "$agents_stub/.claude/AGENTS.md"
 printf '{"stub": true}\n'      > "$agents_stub/.claude/settings.json"
 printf 'stub agent\n'          > "$agents_stub/.claude/agents/stub-agent.md"
 printf 'stub skill\n'          > "$agents_stub/.claude/skills/stub-skill.md"
@@ -400,7 +400,9 @@ new_home
 run_deploy
 assert_eq "exit 0" "0" "$run_rc"
 assert_eq "stderr は空" "" "$run_err"
-assert_symlink_to "CLAUDE.md"     "$home/.claude/CLAUDE.md"     "$agents_stub/.claude/CLAUDE.md"
+# Claude Code はユーザー単位では ~/.claude/CLAUDE.md しか読まないため、
+# リンク名は CLAUDE.md のまま、リンク元をリポジトリの .claude/AGENTS.md にする。
+assert_symlink_to "CLAUDE.md"     "$home/.claude/CLAUDE.md"     "$agents_stub/.claude/AGENTS.md"
 assert_symlink_to "settings.json" "$home/.claude/settings.json" "$agents_stub/.claude/settings.json"
 assert_symlink_to "agents"        "$home/.claude/agents"        "$agents_stub/.claude/agents"
 assert_symlink_to "skills"        "$home/.claude/skills"        "$agents_stub/.claude/skills"
@@ -414,10 +416,48 @@ assert_eq ".codex/skills の中身はソースと一致" \
     "$(cd "$home/.codex/skills" && find . -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | tr '\n' ' ' | sed 's/ $//')"
 
 start_test "リンク経由で設定ファイルの内容が読める"
-assert_eq "CLAUDE.md の内容が読める"     "stub CLAUDE.md" "$(cat "$home/.claude/CLAUDE.md")"
+assert_eq "CLAUDE.md 経由で AGENTS.md の内容が読める" "stub AGENTS.md" "$(cat "$home/.claude/CLAUDE.md" 2>/dev/null)"
 assert_eq "settings.json の内容が読める" '{"stub": true}' "$(cat "$home/.claude/settings.json")"
 assert_eq "agents 配下が読める"          "stub agent"     "$(cat "$home/.claude/agents/stub-agent.md")"
 assert_eq "codex skill 配下が読める"     "stub alpha"     "$(cat "$home/.codex/skills/alpha-skill/SKILL.md")"
+
+start_test "旧リンク元を指す CLAUDE.md のリンクは AGENTS.md へ張り直す"
+# リポジトリ側で .claude/CLAUDE.md を AGENTS.md へ改名すると、以前の配置で
+# 張ったリンクは解決できない状態で残る。stub に .claude/CLAUDE.md は無いため、
+# このリンクはその壊れたリンクと同じ形になる。
+new_home
+mkdir -p "$home/.claude"
+ln -s "$agents_stub/.claude/CLAUDE.md" "$home/.claude/CLAUDE.md"
+run_deploy
+assert_eq "旧リンク既存でも exit 0" "0" "$run_rc"
+assert_eq "旧リンク既存でも stderr は空" "" "$run_err"
+assert_symlink_to "旧リンク既存: CLAUDE.md" "$home/.claude/CLAUDE.md" "$agents_stub/.claude/AGENTS.md"
+assert_stdout_mentions "旧リンク既存: 配置対象として報告される" "$home/.claude/CLAUDE.md"
+assert_true "旧リンクは .backup へ退避されない" \
+    "$([ ! -e "$home/.claude/CLAUDE.md.backup" ] && [ ! -L "$home/.claude/CLAUDE.md.backup" ] && echo 1 || echo 0)" \
+    "tree: $(find "$home/.claude" -maxdepth 1 2>/dev/null | sort | tr '\n' ' ')"
+assert_eq "旧リンク既存: CLAUDE.md 経由で AGENTS.md の内容が読める" "stub AGENTS.md" "$(cat "$home/.claude/CLAUDE.md" 2>/dev/null)"
+
+start_test "既存の CLAUDE.md 実ファイルは .backup へ退避してから AGENTS.md へリンクする"
+# 手編集された内容を想定し、CRLF と末尾改行なしを含めてバイト単位の保持を確かめる。
+new_home
+mkdir -p "$home/.claude"
+printf '# hand-written CLAUDE.md\r\nlocal rule\r\nno trailing newline' > "$home/.claude/CLAUDE.md"
+cp "$home/.claude/CLAUDE.md" "$work/handwritten-claude-md-original"
+run_deploy
+assert_eq "実ファイル退避を伴っても exit 0" "0" "$run_rc"
+assert_eq "実ファイル退避を伴っても stderr は空" "" "$run_err"
+assert_symlink_to "実ファイル退避後: CLAUDE.md" "$home/.claude/CLAUDE.md" "$agents_stub/.claude/AGENTS.md"
+assert_stdout_mentions "実ファイル退避後: 退避が報告される" "Backed up: $home/.claude/CLAUDE.md"
+assert_true "退避先 CLAUDE.md.backup が通常ファイルとして存在する" \
+    "$([ -f "$home/.claude/CLAUDE.md.backup" ] && [ ! -L "$home/.claude/CLAUDE.md.backup" ] && echo 1 || echo 0)" \
+    "tree: $(find "$home/.claude" -maxdepth 1 2>/dev/null | sort | tr '\n' ' ')"
+if cmp -s "$work/handwritten-claude-md-original" "$home/.claude/CLAUDE.md.backup"; then
+    ok
+else
+    fail "退避された CLAUDE.md の内容がバイト単位で保持される" \
+        "backup: $(od -c "$home/.claude/CLAUDE.md.backup" 2>/dev/null | head -5)"
+fi
 
 start_test "デプロイ対象が HOME 配下だけに限定される"
 new_home
