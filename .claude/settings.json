@@ -137,6 +137,7 @@
     }
   },
   "outputStyle": "Explanatory",
+  "plansDirectory": "plans",
   "language": "japanese",
   "sandbox": {
     "enabled": false
