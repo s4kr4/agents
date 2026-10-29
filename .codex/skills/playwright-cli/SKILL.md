@@ -151,7 +151,8 @@ playwright-cli unroute
 ```bash
 playwright-cli console
 playwright-cli console warning
-playwright-cli network
+playwright-cli requests
+playwright-cli request 1
 playwright-cli run-code "async page => await page.context().grantPermissions(['geolocation'])"
 playwright-cli run-code --filename=script.js
 playwright-cli tracing-start
@@ -318,7 +319,7 @@ playwright-cli open https://example.com
 playwright-cli click e4
 playwright-cli fill e7 "test"
 playwright-cli console
-playwright-cli network
+playwright-cli requests
 playwright-cli close
 ```
 

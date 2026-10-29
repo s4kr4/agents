@@ -53,7 +53,7 @@ tester / implementer 分離のオーケストレーション手順と、この�
      - static diagnostic: 対象診断（compiler / lint / deprecation）の検出ログ
      - characterization baseline / invariant guard: 開始時 GREEN の実行ログと、変異試験で fail することの確認結果
    - **充足可能性チェック**の結果（「🔧 Red-Green-Refactor 詳解」手順 3）
-   - **変異試験**の結果（`/adversarial-testing` の「🧪 変異試験」）。生存した変異はテストギャップ / 等価変異 / 他テストによる冗長被覆を区別して記載
+   - **変異試験**の結果（`/adversarial-testing` の「🧪 変異試験」）。生存した変異は同スキルの「生存変異の分類」に従って分類して記載
    - 前提条件を満たせず SKIP したケースの件数と理由
 4. レポートを添えて `@implementer` に委譲:
    - 入力: **フェーズの明示（Phase 2b / GREEN・REFACTOR）**、tester レポート、承認済み計画のスコープ、**参照するドメイン固有スキル**（「スキル指定表」参照）

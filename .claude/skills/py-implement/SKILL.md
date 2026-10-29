@@ -13,7 +13,7 @@ Python実装のベストプラクティス、コーディング規約、パタ�
 - PEP 8スタイルガイドに従う
 - Ruffで自動フォーマット・リント
 - インデント: スペース4個
-- 行の長さ: 88文字（Ruff標準）
+- 行の長さ: プロジェクトの Ruff・formatter の設定に従う。設定が無い場合は 88 文字（Ruff の既定値）
 
 ### 2. **Type Hints**（型ヒント）
 - 関数の引数と戻り値には型ヒントを使用
@@ -93,6 +93,12 @@ def get_user(user_id: str) -> Optional[Dict[str, str]]:
     pass
 ```
 
+#### mypy の絞り込み
+
+- 絞り込みには `assert x is not None` / `assert isinstance(x, T)` を使う。`cast` や `# type: ignore` は診断を消すだけで、実行時に何も確かめない
+- `unittest` の `assertIsNotNone` / `assertIsInstance` では mypy の絞り込みが効かない
+- モジュールレベルの変数を `assert` で絞り込んでも、関数の中では宣言された型に戻る。一時変数で受けて絞り込んだ結果を、非 Optional の名前に代入する
+
 #### モダンPython機能
 
 ```python
@@ -122,6 +128,13 @@ def process_data(value: Union[str, int]) -> Optional[str]:
         return str(value)
     return value if value else None
 ```
+
+## ⚠️ 非 ASCII 文字・制御文字をソースに書く
+
+- 生の文字は書き込まず、ツールにデコードされない表記で表す。名前付きエスケープ（`"\N{SUPERSCRIPT ONE}"`）か `chr(0x2028)` を使う。編集ツール（Edit・Write）は入力中の `\uXXXX` をデコードし、生の文字を書き込むことがある
+- Bash のインライン実行（`python -c`）にエスケープ表記を書くと、制御文字を含むコマンドとして拒否されることがある。`chr()` で組み立てるか、スクリプトファイルに書いて実行する
+- 書き込んだ後、該当箇所のバイト列を `od -c` か `grep -nP` で確かめる。日本語コメントを含むファイルでは、ファイル全体ではなく書き込んだ行を見る。テストは文字そのものを照合するため、エスケープかリテラルかの違いをテストでは検出できない
+- テストで制御文字を生成する一般原則は `/adversarial-testing` の「🎯 想定入力範囲の軸」を参照する
 
 ## ✅ Quality Standards（品質基準）
 
@@ -170,6 +183,8 @@ uv run mypy yourfile.py
 ### 設定ファイル
 
 #### pyproject.toml
+
+プロジェクトに設定が無い場合の既定値。既存の設定があればそちらを優先する。
 
 ```toml
 [tool.ruff]
