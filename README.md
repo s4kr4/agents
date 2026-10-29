@@ -35,7 +35,7 @@ cd ~/.agents
 make deploy
 ```
 
-`make deploy` を実行すると、`.claude/` 配下のファイルが `~/.claude/` にシンボリックリンクとして展開されます。
+`make deploy` を実行すると、`.claude/` 配下のファイルが `~/.claude/` にシンボリックリンクとして展開されます。skill は 1 つずつリンクされ、`~/.claude/skills` は実ディレクトリになるため、git 管理外のローカル skill も置けます。リポジトリから消えた skill のリンクは、次の `make deploy` で片付けられます。
 
 ## コマンド
 

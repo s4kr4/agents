@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # PreToolUse: Write/Edit がプロジェクトルート外を対象にしていたらブロック
 # 対応ルール: file-operations.md
-# 例外: ~/.claude/skills 配下への書き込みは許可
+# 例外: ~/.claude/skills 配下と、このフックが属するリポジトリの .claude/skills 配下への書き込みは許可
 # 例外: ~/.claude/projects/*/memory/ 配下への書き込みは許可（auto memory 機能）
 # 例外: ${TMPDIR:-/tmp}/claude-<UID>/<スラグ>/<session_id>/ 配下への書き込みは許可（スクラッチパッド）
 
@@ -28,12 +28,17 @@ real_f=$(realpath -m "$f")
 # プロジェクトルートはフックを起動したプロセスの cwd ではなく CLAUDE_PROJECT_DIR を基準にする
 real_project=$(realpath -m "${CLAUDE_PROJECT_DIR:-$PWD}")
 real_skills=$(realpath -m "$HOME/.claude/skills")
+# skill はリポジトリから skill 単位でリンクされ、書き込み先はリンクを辿ってリポジトリ側に解決される。
+# そのため、フックの実体が属するリポジトリの skills も許可する
+hook_dir=$(dirname "$(realpath -m "${BASH_SOURCE[0]}")")
+real_repo_skills=$(realpath -m "$hook_dir/../skills")
 real_home=$(realpath -m "$HOME")
 scratch_base=$(realpath -m "${TMPDIR:-/tmp}/claude-$EUID")
 
 case "$real_f" in
   "$real_project"/*|"$real_project") exit 0 ;;
   "$real_skills"/*|"$real_skills") exit 0 ;;
+  "$real_repo_skills"/*|"$real_repo_skills") exit 0 ;;
   # <スラグ>/<session_id>/<1 つ以上の要素> の深さを要求する（スラグ自体は照合しない）
   "$scratch_base"/*/*/*)
     session_id=$(printf '%s' "$payload" | jq -r '.session_id // empty' 2>/dev/null)

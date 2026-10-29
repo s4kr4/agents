@@ -3,13 +3,12 @@
 
 input=$(cat)
 
-debug_dir="$(dirname "$0")/../skills/_tracker"
-mkdir -p "$debug_dir"
-
 timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 session_id=$(printf '%s' "$input" | jq -r '.session_id // empty')
 cwd=$(printf '%s' "$input" | jq -r '.cwd // ""')
 
+# デバッグログも記録と同じ場所へ書く。スクリプトの位置から辿るとリポジトリの
+# skills 配下になり、~/.claude/skills が実ディレクトリの構成では記録と別の場所に分かれるため。
 tracker_dir="${HOME}/.claude/skills/_tracker"
 mkdir -p "$tracker_dir"
 
@@ -18,7 +17,7 @@ printf '%s called: keys=%s transcript_path=%s\n' \
   "$timestamp" \
   "$(printf '%s' "$input" | jq -r 'keys | join(",")' 2>/dev/null)" \
   "$(printf '%s' "$input" | jq -r '.transcript_path // "(none)"' 2>/dev/null)" \
-  >> "$debug_dir/debug-stop.log"
+  >> "$tracker_dir/debug-stop.log"
 
 transcript_path=$(printf '%s' "$input" | jq -r '.transcript_path // empty')
 if [ -z "$transcript_path" ] || [ ! -f "$transcript_path" ]; then

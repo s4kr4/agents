@@ -143,8 +143,9 @@ class HookPreBoundaryTestBase(unittest.TestCase):
         self.root = Path(temp.name).resolve()
         abort_if_unsafe_temp_root(self.root)
 
-        # フックが自分の位置ではなく渡された環境を見ることを確かめるため、
-        # 本体はリポジトリとは無関係な場所に複製して実行する。
+        # プロジェクトルート・スクラッチパッドが自分の位置ではなく渡された環境から
+        # 決まることを確かめるため、本体はリポジトリとは無関係な場所に複製して実行する。
+        # フックの位置から決まる許可範囲（隣の ../skills）は TestRepositorySkills で扱う。
         self.hook = self.root / "copy" / HOOK_NAME
         self.hook.parent.mkdir(parents=True)
         shutil.copy2(HOOK_UNDER_TEST, self.hook)
@@ -484,6 +485,80 @@ class TestExistingExceptions(HookPreBoundaryTestBase):
                     self.assert_allowed(run)
                 else:
                     self.assert_denied(run)
+
+
+class TestRepositorySkills(HookPreBoundaryTestBase):
+    """~/.claude/skills が skill 単位のリンクを並べた実ディレクトリでも、リンク越しに
+    フックが属するリポジトリの .claude/skills へ書き込める。それ以外のリポジトリ内は通さない。
+    """
+
+    def setUp(self):
+        super().setUp()
+        # リポジトリと同じ相対配置に複製する。フックの隣の ../skills は repo/.claude/skills。
+        self.repo_claude = self.root / "repo" / ".claude"
+        self.hook = self.repo_claude / "scripts" / HOOK_NAME
+        self.hook.parent.mkdir(parents=True)
+        shutil.copy2(HOOK_UNDER_TEST, self.hook)
+
+        self.repo_skills = self.repo_claude / "skills"
+        (self.repo_skills / "tdd").mkdir(parents=True)
+        (self.repo_skills / "tdd" / "SKILL.md").write_text("tdd\n", encoding="utf-8")
+        (self.repo_claude / "settings.json").write_text("{}\n", encoding="utf-8")
+        (self.repo_claude / "skills-archive").mkdir()
+
+        # deploy 後の ~/.claude/skills: 実ディレクトリに skill 単位のリンクと実行時データ。
+        self.assertFalse(self.skills.is_symlink())
+        (self.skills / "tdd").symlink_to(self.repo_skills / "tdd")
+        (self.skills / "_tracker").mkdir()
+        (self.skills / "evil").symlink_to(self.outside)
+
+    def check_from_another_project(self, target: Path) -> HookRun:
+        return self.check(target, cwd=self.elsewhere)
+
+    def test_allows_writes_into_repository_skills(self):
+        cases: dict[str, Path] = {
+            "a new file through a skill link": self.skills / "tdd" / "feedback" / "x.md",
+            "an existing file through a skill link": self.skills / "tdd" / "SKILL.md",
+            "the repository skill file itself": self.repo_skills / "tdd" / "SKILL.md",
+            "a new skill in the repository": self.repo_skills / "new-skill" / "SKILL.md",
+        }
+        for label, target in cases.items():
+            with self.subTest(case=label):
+                # Act / Assert
+                self.assert_allowed(self.check_from_another_project(target))
+
+    def test_allows_writes_into_the_real_skills_directory(self):
+        # Act / Assert
+        self.assert_allowed(self.check_from_another_project(self.skills / "_tracker" / "x.log"))
+
+    def test_allows_repository_skills_when_the_hook_is_reached_through_a_symlink(self):
+        # Arrange: リポジトリへのパスがシンボリックリンクを経由していても、
+        # フックの実体の位置から許可範囲を決める。
+        alias = self.root / "repo-alias"
+        alias.symlink_to(self.root / "repo")
+        self.hook = alias / ".claude" / "scripts" / HOOK_NAME
+
+        # Act / Assert
+        self.assert_allowed(
+            self.check_from_another_project(self.skills / "tdd" / "feedback" / "x.md")
+        )
+
+    def test_denies_other_paths_in_the_repository_and_escapes(self):
+        cases: dict[str, Path] = {
+            "a hook script": self.repo_claude / "scripts" / "x.sh",
+            "the repository settings": self.repo_claude / "settings.json",
+            "a sibling sharing the skills prefix": self.repo_claude / "skills-archive" / "x",
+            "a dot-dot escape from repository skills": self.repo_skills / ".." / "settings.json",
+            "a dot-dot escape through a skill link": (
+                self.skills / "tdd" / ".." / ".." / "settings.json"
+            ),
+            "a skill link pointing outside": self.skills / "evil" / "x",
+            "the repository root": self.root / "repo" / "x",
+        }
+        for label, target in cases.items():
+            with self.subTest(case=label):
+                # Act / Assert
+                self.assert_denied(self.check_from_another_project(target))
 
 
 class TestPayloadHandling(HookPreBoundaryTestBase):

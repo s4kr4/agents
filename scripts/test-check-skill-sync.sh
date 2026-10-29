@@ -2082,9 +2082,10 @@ assert_match "stdout に usage が出る" '[Uu]sage' "$run_out"
 assert_worktree_unchanged "同期スクリプトの -h"
 assert_index_unchanged "同期スクリプトの -h"
 
-# Claude Code のスキル配信は .claude/skills/synced/ へ書き込まれる。deploy.sh が
-# ~/.claude/skills をこのリポジトリの .claude/skills へ symlink するため、配信物は
-# リポジトリ内に現れる。_tracker と同じく Codex 側の同期対象から外す。
+# Claude Code のスキル配信物（synced/）は ~/.claude/skills 側に置かれ、リポジトリの
+# skill ではない。それでもリポジトリの .claude/skills/synced/ には、~/.claude/skills が
+# リポジトリを指すリンクのまま deploy されていないマシンで書かれた配信物や、そうした
+# マシンから残ったデータが現れうる。_tracker と同じく Codex 側の同期対象から外す。
 start_test "同期スクリプトは配信物の synced/ を Codex 側へ複製しない"
 new_repo
 mkdir -p "$repo/.claude/skills/synced/delivered" "$repo/.claude/skills/newskill" \

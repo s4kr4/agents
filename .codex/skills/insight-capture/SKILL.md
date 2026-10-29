@@ -70,7 +70,7 @@ description: 作業中に得た知見をスキルとして保存・既存スキ�
    - **一行説明**（frontmatter の description に使う説明文）
    - **スキルの用途**（いつ使うか）
 
-2. 以下のテンプレートで `~/.claude/skills/[スキル名]/SKILL.md` を作成する：
+2. 以下のテンプレートで `~/.agents/.claude/skills/[スキル名]/SKILL.md` を作成する。`~/.claude/skills/` は git 管理外のローカル skill も置く実ディレクトリのため、ここに作ると git 管理と Codex への同期の対象から外れる：
 
 ~~~markdown
 ---
@@ -108,6 +108,8 @@ description: [一行説明]
 
 [例外・制限・気をつけること（あれば）]
 ~~~
+
+3. `make -C ~/.agents deploy` を実行し、作成した skill を `~/.claude/skills/[スキル名]` へリンクする。deploy は skill 単位でリンクを張るため、実行するまで新しい skill は読み込まれない
 
 ### Step 4: 保存の確認
 
