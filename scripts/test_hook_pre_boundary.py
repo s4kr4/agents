@@ -18,6 +18,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -54,6 +55,46 @@ FOREIGN_UID = CURRENT_UID + 1
 
 JQ_PATH = shutil.which("jq")
 REALPATH_PATH = shutil.which("realpath")
+
+# 有無を切り替えて検証する依存コマンド。PATH から外すだけでは /usr/bin 側の同名コマンドが
+# 見えてしまうため、/usr/bin と /bin からこれらを除いた写しを作って PATH に使う。
+SWITCHED_COMMANDS = frozenset({"jq", "realpath", "grealpath"})
+
+
+def _gnu_realpath() -> str | None:
+    """名前ではなく挙動で判定する: 存在しないパスを -m で正規化できる realpath。"""
+    path = shutil.which("realpath", path=MINIMAL_PATH)
+    if path is None:
+        return None
+    try:
+        result = subprocess.run(
+            [path, "-m", "/nonexistent-probe/a/../b"],
+            env={"PATH": MINIMAL_PATH},
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return path if result.returncode == 0 and result.stdout == "/nonexistent-probe/b\n" else None
+
+
+GNU_REALPATH = _gnu_realpath()
+
+
+def build_command_tree(destination: Path, excluded: frozenset[str] = frozenset()) -> None:
+    """/usr/bin と /bin の実行ファイルへのリンクを、切り替え対象と excluded のコマンドを除いて並べる。"""
+    destination.mkdir(parents=True)
+    for directory in (Path("/usr/bin"), Path("/bin")):
+        if not directory.is_dir():
+            continue
+        for entry in sorted(directory.iterdir()):
+            link = destination / entry.name
+            if entry.name in SWITCHED_COMMANDS | excluded or os.path.lexists(link):
+                continue
+            if entry.is_file() and os.access(entry, os.X_OK):
+                link.symlink_to(entry)
 
 # フックの出力に現れてはならない文字（C0 制御文字）。
 CONTROL_CHARACTERS = frozenset(chr(code) for code in range(0x20))
@@ -559,6 +600,519 @@ class TestRepositorySkills(HookPreBoundaryTestBase):
             with self.subTest(case=label):
                 # Act / Assert
                 self.assert_denied(self.check_from_another_project(target))
+
+
+@unittest.skipUnless(GNU_REALPATH, "a realpath that accepts -m is not available")
+class TestDependencyCommands(HookPreBoundaryTestBase):
+    """依存コマンド（jq と、-m を使える realpath / grealpath）が期待どおり動かないときは
+    許可せず、exit 2 で止める。PreToolUse では exit 2 だけが呼び出しを止め、stderr が理由になる。
+    """
+
+    JQ_NEEDLES = ("jq", "PATH")
+    REALPATH_NEEDLES = ("coreutils", "brew install coreutils")
+
+    def setUp(self):
+        super().setUp()
+        self.commands = self.root / "commands"
+        build_command_tree(self.commands)
+        self.variant_count = 0
+
+    # -- fixtures ----------------------------------------------------------
+
+    def write_stub(self, path: Path, body: str) -> None:
+        path.write_text("#!/bin/sh\n" + body, encoding="utf-8")
+        path.chmod(0o755)
+
+    def place_jq(self, bin_dir: Path, kind: str) -> None:
+        assert JQ_PATH is not None
+        if kind == "real":
+            (bin_dir / "jq").symlink_to(JQ_PATH)
+        elif kind == "failing":
+            self.write_stub(bin_dir / "jq", "exit 1\n")
+        elif kind == "fails-on-deny":
+            # 判定の途中までは本物として動き、拒否の JSON を作る呼び出しだけ失敗する。
+            self.write_stub(
+                bin_dir / "jq",
+                'for a in "$@"; do case "$a" in *permissionDecision*) exit 1;; esac; done\n'
+                f'exec "{JQ_PATH}" "$@"\n',
+            )
+        elif kind == "fails-on-session-id":
+            # session_id の取り出しだけ、正しい値を出力したうえで失敗の終了コードを返す。
+            # 出力だけを見て終了コードを確かめない実装は、この値を信じてしまう。
+            self.write_stub(
+                bin_dir / "jq",
+                'for a in "$@"; do case "$a" in *session_id*)\n'
+                f"  printf '%s\\n' '{SESSION_ID}'; exit 1;;\n"
+                "esac; done\n"
+                f'exec "{JQ_PATH}" "$@"\n',
+            )
+        elif kind != "absent":
+            raise ValueError(kind)
+
+    def place_realpath(self, bin_dir: Path, name: str, kind: str) -> None:
+        assert GNU_REALPATH is not None
+        if kind == "real":
+            (bin_dir / name).symlink_to(GNU_REALPATH)
+        elif kind == "no-m":
+            # macOS 標準の realpath の再現: オプションを受け付けず、存在しないパスは失敗する。
+            self.write_stub(
+                bin_dir / name,
+                'for a in "$@"; do case "$a" in -*)\n'
+                '  echo "realpath: illegal option -- ${a#-}" >&2\n'
+                '  echo "usage: realpath [-q] [path ...]" >&2\n'
+                "  exit 1;;\n"
+                "esac; done\n"
+                f'exec "{GNU_REALPATH}" -e -- "$@"\n',
+            )
+        elif kind.startswith("fails-on:"):
+            # -m 付きで動くが、指定した形のパスの解決だけ失敗する（途中での失敗）。
+            pattern = kind.removeprefix("fails-on:")
+            self.write_stub(
+                bin_dir / name,
+                f'for a in "$@"; do case "$a" in {pattern}) exit 1;; esac; done\n'
+                f'exec "{GNU_REALPATH}" "$@"\n',
+            )
+        elif kind.startswith("fails-printing:"):
+            # 指定したパスの解決だけ、別のパスを出力したうえで失敗の終了コードを返す。
+            # 形式: fails-printing:<出力する値>::<case のパターン>
+            printed, pattern = kind.removeprefix("fails-printing:").split("::", 1)
+            self.write_stub(
+                bin_dir / name,
+                f'for a in "$@"; do case "$a" in {pattern}) printf \'%s\\n\' "{printed}"; exit 1;;'
+                " esac; done\n"
+                f'exec "{GNU_REALPATH}" "$@"\n',
+            )
+        elif kind.startswith("empty-on:"):
+            # 指定したパスの解決だけ、何も出力せずに成功の終了コードを返す。
+            pattern = kind.removeprefix("empty-on:")
+            self.write_stub(
+                bin_dir / name,
+                f'for a in "$@"; do case "$a" in {pattern}) exit 0;; esac; done\n'
+                f'exec "{GNU_REALPATH}" "$@"\n',
+            )
+        elif kind != "absent":
+            raise ValueError(kind)
+
+    def commands_without(self, excluded: frozenset[str]) -> Path:
+        """切り替え対象に加えて excluded のコマンドも除いた写し。"""
+        if not excluded:
+            return self.commands
+        tree = self.root / ("commands-without-" + "-".join(sorted(excluded)))
+        if not tree.exists():
+            build_command_tree(tree, excluded)
+        return tree
+
+    def variant_env(
+        self,
+        *,
+        jq: str = "real",
+        realpath: str = "real",
+        grealpath: str = "absent",
+        without: frozenset[str] = frozenset(),
+        extra_stubs: dict[str, str] | None = None,
+    ) -> dict[str, str]:
+        self.variant_count += 1
+        bin_dir = self.root / f"variant-bin-{self.variant_count}"
+        bin_dir.mkdir()
+        self.place_jq(bin_dir, jq)
+        self.place_realpath(bin_dir, "realpath", realpath)
+        self.place_realpath(bin_dir, "grealpath", grealpath)
+        for name, body in (extra_stubs or {}).items():
+            self.write_stub(bin_dir / name, body)
+        return self.hook_env(PATH=f"{bin_dir}:{self.commands_without(without)}")
+
+    def linux_env(self) -> dict[str, str]:
+        return self.variant_env()
+
+    # -- assertions --------------------------------------------------------
+
+    def assert_stopped_with_exit_2(self, run: HookRun, needles: tuple[str, ...]) -> None:
+        self.assertEqual(run.returncode, 2, f"stdout: {run.stdout!r} stderr: {run.stderr!r}")
+        self.assertNotEqual(run.stderr.strip(), "", "the reason must be written to stderr")
+        for needle in needles:
+            self.assertIn(needle, run.stderr)
+        self.assertNotIn('"allow"', run.stdout)
+
+    def assert_refused(self, run: HookRun) -> None:
+        """exit 2 で止めるか、拒否の JSON を出すかのどちらか。許可（無出力の exit 0）ではない。"""
+        if run.returncode == 2:
+            self.assertNotEqual(run.stderr.strip(), "", "the reason must be written to stderr")
+        else:
+            self.assert_denied(run)
+
+    def decision_matrix(self) -> list[tuple[str, Path, bool]]:
+        """Linux（jq と realpath -m が使える環境）での許可・拒否の判定表。"""
+        return [
+            ("a project file", self.project / "docs" / "note.md", True),
+            ("a new nested project file", self.project / "new" / "deeper" / "note.md", True),
+            ("a skill file", self.skills / "tdd" / "SKILL.md", True),
+            ("a memory file", self.memory / "MEMORY.md", True),
+            ("a scratchpad file", self.scratchpad / "nested" / "note.md", True),
+            ("skills beside the hook", self.root / "skills" / "tdd" / "SKILL.md", True),
+            ("a file under the home", self.home / "other" / "note.md", False),
+            ("an escape through a symlink", self.scratchpad / "escape" / "note.md", False),
+            ("a dot-dot escape", self.project / ".." / "outside" / "note.md", False),
+            ("a file under the cwd", self.elsewhere / "note.md", False),
+        ]
+
+    # -- tests -------------------------------------------------------------
+
+    def test_harness_switches_the_dependency_commands(self):
+        # Arrange
+        env = self.variant_env(jq="absent", realpath="no-m", grealpath="absent")
+        bin_dir = Path(env["PATH"].split(":")[0])
+
+        # Act
+        probe = subprocess.run(
+            ["/bin/bash", "-c", "command -v jq; command -v grealpath; realpath -m /x; realpath /"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+
+        # Assert
+        self.assertTrue((self.commands / "bash").exists())
+        for name in SWITCHED_COMMANDS:
+            self.assertFalse(os.path.lexists(self.commands / name), name)
+        self.assertTrue((bin_dir / "realpath").is_file())
+        self.assertEqual(probe.stdout, "/\n", probe)
+        self.assertIn("illegal option -- m", probe.stderr)
+
+    def test_stops_with_exit_2_when_jq_does_not_work(self):
+        targets: dict[str, Path | None] = {
+            "a project file": self.project / "docs" / "note.md",
+            "a file outside the project": self.home / "other" / "note.md",
+            "a payload without file_path": None,
+        }
+        for jq in ("absent", "failing"):
+            for label, target in targets.items():
+                with self.subTest(jq=jq, case=label):
+                    # Act
+                    run = self.check(target, env=self.variant_env(jq=jq), cwd=self.elsewhere)
+
+                    # Assert
+                    self.assert_stopped_with_exit_2(run, self.JQ_NEEDLES)
+
+    def test_stops_with_exit_2_when_no_realpath_accepts_m(self):
+        targets = {
+            "a project file": self.project / "docs" / "note.md",
+            "a file outside the project": self.home / "other" / "note.md",
+        }
+        for realpath in ("absent", "no-m"):
+            for label, target in targets.items():
+                with self.subTest(realpath=realpath, grealpath="absent", case=label):
+                    # Act
+                    run = self.check(
+                        target, env=self.variant_env(realpath=realpath), cwd=self.elsewhere
+                    )
+
+                    # Assert
+                    self.assert_stopped_with_exit_2(run, self.REALPATH_NEEDLES)
+
+    def test_falls_back_to_grealpath_with_the_same_decisions_as_linux(self):
+        for realpath in ("no-m", "absent"):
+            env = self.variant_env(realpath=realpath, grealpath="real")
+            for label, target, allowed in self.decision_matrix():
+                with self.subTest(realpath=realpath, case=label):
+                    # Arrange
+                    linux = self.check(target, env=self.linux_env(), cwd=self.elsewhere)
+
+                    # Act
+                    fallback = self.check(target, env=env, cwd=self.elsewhere)
+
+                    # Assert
+                    if allowed:
+                        self.assert_allowed(linux)
+                    else:
+                        self.assert_denied(linux)
+                    self.assertEqual(fallback, linux)
+
+    def test_stops_with_exit_2_when_the_deny_decision_cannot_be_written(self):
+        # Arrange
+        env = self.variant_env(jq="fails-on-deny")
+
+        # Act
+        denied = self.check(self.home / "other" / "note.md", env=env, cwd=self.elsewhere)
+        allowed = self.check(self.project / "docs" / "note.md", env=env, cwd=self.elsewhere)
+
+        # Assert
+        self.assert_stopped_with_exit_2(denied, ())
+        self.assert_allowed(allowed)
+
+    def test_does_not_treat_an_unresolved_range_as_allowing_everything(self):
+        # Arrange: 許可範囲の解決だけが途中で失敗する。空の範囲は "/*" と同じ意味になりうる。
+        failures = {
+            "the skills ranges": "*/skills",
+            "the project root": f'"{self.project}"|"{self.project}/"',
+        }
+        for label, pattern in failures.items():
+            with self.subTest(unresolved=label):
+                env = self.variant_env(realpath=f"fails-on:{pattern}")
+
+                # Act
+                run = self.check(self.home / "other" / "note.md", env=env, cwd=self.elsewhere)
+
+                # Assert
+                self.assert_refused(run)
+
+    def test_does_not_derive_a_range_from_the_cwd_when_the_hook_path_cannot_be_resolved(self):
+        # Arrange: フック自身のパスの解決だけが失敗する。空のパスの dirname は "." になり、
+        # その ../skills は cwd の親の skills を指してしまう。
+        cwd = self.root / "x" / "proj"
+        cwd.mkdir(parents=True)
+        env = self.variant_env(realpath=f'fails-on:"{self.hook}"')
+
+        # Act
+        run = self.check(self.root / "x" / "skills" / "a.md", env=env, cwd=cwd)
+
+        # Assert
+        self.assert_refused(run)
+
+    def test_refuses_when_the_target_path_cannot_be_resolved(self):
+        # Arrange
+        target = self.project / "docs" / "note.md"
+        env = self.variant_env(realpath=f'fails-on:"{target}"')
+
+        # Act
+        run = self.check(target, env=env, cwd=self.elsewhere)
+
+        # Assert
+        self.assert_refused(run)
+
+    # -- 許可範囲ごとの解決の失敗 ----------------------------------------------
+
+    def range_resolutions(self) -> dict[str, tuple[str, Path, Path]]:
+        """許可範囲ごとに (realpath に渡る引数, 範囲が空になると許可されるパス,
+        範囲が /etc になると許可されるパス)。どちらのパスも本来は拒否される。
+        """
+        return {
+            "the project root": (str(self.project), Path("/etc/passwd"), Path("/etc/passwd")),
+            "the skills directory": (str(self.skills), Path("/etc/passwd"), Path("/etc/passwd")),
+            "the hook path": (
+                str(self.hook),
+                Path("/skills/evil.sh"),
+                Path("/etc/skills/evil.sh"),
+            ),
+            "the repository skills": (
+                f"{self.hook.parent}/../skills",
+                Path("/etc/passwd"),
+                Path("/etc/passwd"),
+            ),
+            "the home directory": (
+                str(self.home),
+                Path("/.claude/projects/x/memory/a.md"),
+                Path("/etc/.claude/projects/x/memory/a.md"),
+            ),
+            "the scratchpad base": (
+                str(self.tmpdir / f"claude-{CURRENT_UID}"),
+                Path("/slug") / SESSION_ID / "note.md",
+                Path("/etc/slug") / SESSION_ID / "note.md",
+            ),
+        }
+
+    def test_refuses_when_a_range_fails_to_resolve_without_output(self):
+        for label, (argument, target, _) in self.range_resolutions().items():
+            with self.subTest(range=label):
+                # Arrange
+                env = self.variant_env(realpath=f'fails-on:"{argument}"')
+
+                # Act
+                run = self.check(target, env=env, cwd=self.elsewhere)
+
+                # Assert
+                self.assert_refused(run)
+
+    def test_refuses_when_a_range_fails_to_resolve_but_prints_a_path(self):
+        # Arrange: 失敗の終了コードと一緒に出力された値を、範囲として使ってはならない。
+        # 書き込み先そのものは、失敗時にプロジェクト内のパスを出力させる。
+        cases: dict[str, tuple[str, str, Path]] = {
+            "the target path": ("/etc/passwd", str(self.project / "x"), Path("/etc/passwd")),
+        }
+        for label, (argument, _, target) in self.range_resolutions().items():
+            printed = "/etc/hookdir/hook.sh" if label == "the hook path" else "/etc"
+            cases[label] = (argument, printed, target)
+        for label, (argument, printed, target) in cases.items():
+            with self.subTest(range=label):
+                env = self.variant_env(realpath=f'fails-printing:{printed}::"{argument}"')
+
+                # Act
+                run = self.check(target, env=env, cwd=self.elsewhere)
+
+                # Assert
+                self.assert_refused(run)
+
+    def test_refuses_when_a_range_resolves_to_an_empty_string(self):
+        # Arrange: 成功の終了コードで空を返す realpath。空の範囲は "/*" と同じ意味になりうる。
+        for label, (argument, target, _) in self.range_resolutions().items():
+            with self.subTest(range=label):
+                env = self.variant_env(realpath=f'empty-on:"{argument}"')
+
+                # Act
+                run = self.check(target, env=env, cwd=self.elsewhere)
+
+                # Assert
+                self.assert_refused(run)
+
+    # -- 名前を挙げていないコマンド ----------------------------------------------
+
+    def test_stops_with_exit_2_when_the_payload_cannot_be_read(self):
+        targets = {
+            "a project file": self.project / "docs" / "note.md",
+            "a file outside the project": self.home / "other" / "note.md",
+        }
+        variants: dict[str, dict[str, object]] = {
+            "cat is missing": {"without": frozenset({"cat"})},
+            "cat fails after partial output": {
+                "extra_stubs": {"cat": "printf '{}'\nexit 1\n"},
+            },
+        }
+        for variant, options in variants.items():
+            for label, target in targets.items():
+                with self.subTest(variant=variant, case=label):
+                    # Act
+                    run = self.check(
+                        target,
+                        env=self.variant_env(**options),  # type: ignore[arg-type]
+                        cwd=self.elsewhere,
+                    )
+
+                    # Assert
+                    self.assert_stopped_with_exit_2(run, ())
+
+    def test_decides_as_on_linux_without_dirname(self):
+        # Arrange
+        env = self.variant_env(without=frozenset({"dirname"}))
+        cwd = self.root / "x" / "proj"
+        cwd.mkdir(parents=True)
+
+        for label, target, allowed in self.decision_matrix():
+            with self.subTest(case=label):
+                # Act
+                linux = self.check(target, env=self.linux_env(), cwd=self.elsewhere)
+                without = self.check(target, env=env, cwd=self.elsewhere)
+
+                # Assert
+                if allowed:
+                    self.assert_allowed(linux)
+                else:
+                    self.assert_denied(linux)
+                self.assertEqual(without, linux)
+
+        escapes = {
+            "the root-level skills": (Path("/skills/evil.sh"), self.elsewhere),
+            "skills relative to the cwd": (self.root / "x" / "skills" / "a.md", cwd),
+        }
+        for label, (target, run_cwd) in escapes.items():
+            with self.subTest(case=label):
+                # Act / Assert
+                self.assert_refused(self.check(target, env=env, cwd=run_cwd))
+
+    def test_does_not_allow_the_scratchpad_when_session_id_extraction_fails(self):
+        # Arrange: jq は session_id の取り出しでだけ、正しい値を出力して失敗する。
+        env = self.variant_env(jq="fails-on-session-id")
+
+        # Act
+        run = self.check(self.scratchpad / "note.md", env=env, cwd=self.elsewhere)
+        control = self.check(self.scratchpad / "note.md", env=self.linux_env(), cwd=self.elsewhere)
+
+        # Assert
+        self.assert_refused(run)
+        self.assert_allowed(control)
+
+    # -- stdin の読み切り --------------------------------------------------------
+
+    def feed_hook(self, hook: Path, stdin: bytes, env: dict[str, str]) -> tuple[HookRun, str]:
+        """stdin を別スレッドで書き込みながら実行し、書き込みの失敗（パイプの切断）も返す。
+
+        communicate() は書き込み中の BrokenPipeError を握りつぶすため、ここでは自前で書く。
+        パイプの容量（Linux では 64KiB）を超える入力は、相手が読まない限り書き終わらない。
+        """
+        self.abort_if_environment_escapes_tree(env, self.elsewhere)
+        with self.real_environment_unchanged():
+            process = subprocess.Popen(
+                [str(hook)],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=env,
+                cwd=str(self.elsewhere),
+                start_new_session=True,
+            )
+            outputs: dict[str, bytes] = {}
+            write_error: list[str] = []
+
+            def write() -> None:
+                assert process.stdin is not None
+                try:
+                    process.stdin.write(stdin)
+                    process.stdin.close()
+                except OSError as error:
+                    write_error.append(type(error).__name__)
+
+            def read(name: str) -> None:
+                stream = getattr(process, name)
+                outputs[name] = stream.read()
+
+            threads = [threading.Thread(target=write)] + [
+                threading.Thread(target=read, args=(name,)) for name in ("stdout", "stderr")
+            ]
+            for thread in threads:
+                thread.start()
+            try:
+                process.wait(timeout=RUN_DEADLINE_SECONDS)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                self.fail(f"the hook did not finish within {RUN_DEADLINE_SECONDS} seconds")
+            finally:
+                for thread in threads:
+                    thread.join(timeout=10)
+        run = HookRun(
+            process.returncode,
+            outputs.get("stdout", b"").decode("utf-8", "replace"),
+            outputs.get("stderr", b"").decode("utf-8", "replace"),
+        )
+        return run, ",".join(write_error)
+
+    def large_payload(self, target: Path) -> bytes:
+        payload = json.loads(self.payload(target))
+        payload["padding"] = "x" * (1 << 20)
+        return json.dumps(payload).encode("utf-8")
+
+    def test_harness_detects_a_hook_that_exits_without_reading_stdin(self):
+        # Arrange
+        quitter = self.root / "quitter.sh"
+        self.write_stub(quitter, "exit 2\n")
+
+        # Act
+        _, write_error = self.feed_hook(
+            quitter, self.large_payload(self.home / "other" / "note.md"), self.linux_env()
+        )
+
+        # Assert
+        self.assertEqual(write_error, "BrokenPipeError")
+
+    def test_reads_a_large_payload_to_the_end_before_stopping(self):
+        variants: dict[str, dict[str, str]] = {
+            "jq is missing": {"jq": "absent"},
+            "no realpath accepts -m": {"realpath": "absent"},
+            "all dependencies work": {},
+        }
+        for label, options in variants.items():
+            with self.subTest(case=label):
+                # Arrange
+                stdin = self.large_payload(self.home / "other" / "note.md")
+
+                # Act
+                run, write_error = self.feed_hook(self.hook, stdin, self.variant_env(**options))
+
+                # Assert
+                self.assertEqual(write_error, "", f"the hook did not read stdin: {run!r}")
+                if options:
+                    self.assert_stopped_with_exit_2(run, ())
+                else:
+                    self.assert_denied(run)
 
 
 class TestPayloadHandling(HookPreBoundaryTestBase):
