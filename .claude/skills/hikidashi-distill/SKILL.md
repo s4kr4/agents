@@ -14,7 +14,7 @@ description: 未処理セッションの要約から、長期的に有効な意�
 3. 一時的な作業内容、セッション固有の事情、未検証の推測、既存記憶と重複する内容は候補から除外する
 4. `search` / `get_context` で現行記憶との重複・矛盾を確認する
 5. `list_tags` で既存タグを確認し、抽出候補にタグを付ける場合は同義タグを増やさず可能な限り再利用する
-6. 保存する候補を `write_memory` に渡す。抽出では元セッションの `session_id` を必ず指定し、project 記憶は元の `project_id` と一致させる
+6. 保存する候補を `write_memory` に渡す。抽出では元セッションの `session_id` を必ず指定し、project 記憶は元の `project_id` と一致させる。本文は `hikidashi` スキルの「本文の書き方」に従う
 7. すべての保存結果を確認した後、元の `session_id` で `mark_extracted` を呼ぶ。保存に失敗したセッションは処理済みにしない
 8. `search` と `get_context` で保存結果を確認する
 
