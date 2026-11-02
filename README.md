@@ -37,6 +37,14 @@ make deploy
 
 `make deploy` を実行すると、`.claude/` 配下のファイルが `~/.claude/` にシンボリックリンクとして展開されます。skill は 1 つずつリンクされ、`~/.claude/skills` は実ディレクトリになるため、git 管理外のローカル skill も置けます。リポジトリから消えた skill のリンクは、次の `make deploy` で片付けられます。
 
+Windows で Claude と Codex の skill を配置する場合は、PowerShell から次を実行します。
+
+```powershell
+pwsh -NoProfile -File .\scripts\deploy-skills.ps1
+```
+
+`.claude/skills/` と `.codex/skills/` の各 skill を、それぞれ `$HOME\.claude\skills\` と `$HOME\.codex\skills\` に個別のジャンクションとして配置します。配置先のローカル skill は保持されます。既存の同名ディレクトリや、リポジトリから消えた skill の旧リンクは `.backup` に退避されます。配置先の `skills` 自体がリンクまたはファイルの場合は、中身を守るため変更せず停止します。
+
 ## コマンド
 
 ```bash
