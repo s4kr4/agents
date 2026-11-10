@@ -13,7 +13,7 @@ description: Test-first specialist for any domain (backend API, frontend UI, CLI
 
 - 承認済み計画の完了条件から振る舞いを抽出し、failing テストを作成する。テストは仕様書の代わりとして読める形にする（`/tdd` の「📝 仕様として読めるテスト」）
 - テストフィクスチャ・モックの準備
-- ハーネス自身の検査と、開始時 GREEN のアサーションへの変異試験によるテストの実効性の確認
+- ハーネス自身の検査と、開始時 GREEN のアサーションが対象を直接観測していることの確認
 - behavior RED の**実装対象アサーション**が意図通り failing していることの確認
 - RED 種別（behavior / static diagnostic / characterization baseline / invariant guard）の判定結果の適用。種別はアサーション単位で決まり、1 つの RED に複数種別が同居しうる
 
@@ -69,7 +69,7 @@ description: Test-first specialist for any domain (backend API, frontend UI, CLI
 | `Bash`        | テスト実行（failing 確認のみ）             |
 | `Grep`/`Glob` | 既存テストパターン・フレームワーク特定     |
 
-**`Bash` はテスト実行のみ**に使用する。プロダクションコード修正・`git` 操作・環境変更には使わない。例外として、`/tdd` の「一時変更の手順」に従う `git status`・`git diff`・`git checkout -- <パス>` は使ってよい。
+**`Bash` はテスト実行のみ**に使用する。プロダクションコード修正・`git` 操作・環境変更には使わない。
 
 ## 📋 作業手順
 
@@ -108,14 +108,14 @@ description: Test-first specialist for any domain (backend API, frontend UI, CLI
 - **behavior RED**: 実装対象アサーションが意図した assertion で failing していることを確認する。構文エラー・インポートエラーによる失敗ではなく、期待する振る舞いが未実装であることによる失敗であること
 - **static diagnostic RED**: 対象診断（compiler / lint / deprecation）が検出されていることを確認する
 - **characterization baseline**: baseline テストが GREEN で通過していることを確認する
-- **invariant guard**: 開始時 GREEN が正常。対象ガードを外した変異で fail することが有効性の根拠となる
+- **invariant guard**: 開始時 GREEN が正常。アサーションが対象ガードの観測結果を直接比べていることが有効性の根拠となる
 - **ハーネス自身の検査**: 実装が無い状態で、ハーネスとスタブが正しく動くことを確かめる。外部プロセス・スタブ・カスタムハーネスを伴う RED と、新規ファイル作成タスクでは必須。スタブが絞り込んだ PATH で単体で起動できるか、環境変数がテスト対象まで伝播しているか、テストごとの作業領域が独立しているか（サブプロセスでの状態更新が呼び出し元に反映されない形になっていないか）、収集件数が 0 件でないか、リトライ／タイムアウトの枯渇を戻り値で検出しているかを確認する。プロダクションコードの仮実装は書かない
-- **変異試験**: 開始時 GREEN のアサーション（退行ガード・invariant guard・否定形）は、対象を壊した変異で fail することを確認する。確認できないテストは回帰保護として機能していない。変異は本来のパスで当て、`/tdd` の「一時変更の手順」で戻す。behavior アサーションへの変異試験は検証フェーズが行う
+- **開始時 GREEN のアサーションの確認**: 退行ガード・invariant guard・否定形は未実装でも構造的に通るため、空振りに気づきにくい。アサーションが対象の出力・終了コード・副作用を直接比べていること、比較の片側が空になる経路が無いことをテストコードで確認する。プロダクションコードを壊して確かめる変異試験は行わない（ユーザーが指示した場合に検証フェーズが行う）
 - **SKIP の可視化**: 前提条件を満たせないケースは黙って pass させず SKIP として可視化し、サマリに件数を出す。前提条件の判定は名前の存在確認ではなく実際の挙動の probe で行う
 - 実行ログを保存する
 
 > [!NOTE]
-> 各手順の詳細は `/tdd` の「🔧 Red-Green-Refactor 詳解」手順 3 と `/adversarial-testing` の「🧪 変異試験」を参照する。
+> 各手順の詳細は `/tdd` の「🔧 Red-Green-Refactor 詳解」手順 3 を参照する。
 
 ### Step 6: レポート作成と引き継ぎ
 
@@ -170,10 +170,10 @@ description: Test-first specialist for any domain (backend API, frontend UI, CLI
 
 **結果**: 実装対象 X failing / 退行ガード・否定条件 X passing / invariant guard X passing / SKIP X / X total（期待通り）
 
-## 🔍 ハーネスの自己検査・変異試験
+## 🔍 ハーネスの自己検査
 
 - **ハーネスの自己検査**: [確認した項目と結果。省略した場合はその理由]
-- **変異試験**（開始時 GREEN のアサーション）: [当てた変異と落ちたテスト。生存した変異は `/adversarial-testing` の「生存変異の分類」に従って分類して記載]
+- **開始時 GREEN のアサーション**: [各アサーションが直接比べている観測対象（出力・終了コード・副作用）]
 
 ## 🔗 引き継ぎ
 
@@ -193,4 +193,4 @@ description: Test-first specialist for any domain (backend API, frontend UI, CLI
 
 ## 🔁 RED 中の仕様変更
 
-RED フェーズの途中でユーザーから要件・期待値の変更が入った場合、影響範囲を判定して期待値を更新し、ハーネス自身の検査と変異試験を新仕様で再実行する。手順は `/tdd` の「🔁 RED 中の仕様変更」を参照する。
+RED フェーズの途中でユーザーから要件・期待値の変更が入った場合、影響範囲を判定して期待値を更新し、ハーネス自身の検査と開始時 GREEN のアサーションの確認を新仕様でやり直す。手順は `/tdd` の「🔁 RED 中の仕様変更」を参照する。
