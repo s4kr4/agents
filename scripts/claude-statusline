@@ -63,13 +63,24 @@ fi
 five_hour_pct=$(echo "$input" | jq -r 'if (.rate_limits.five_hour.used_percentage | type) == "number" then (.rate_limits.five_hour.used_percentage | round | tostring) else "" end')
 seven_day_pct=$(echo "$input" | jq -r 'if (.rate_limits.seven_day.used_percentage | type) == "number" then (.rate_limits.seven_day.used_percentage | round | tostring) else "" end')
 
-if [ -n "$five_hour_pct" ] && [ -n "$seven_day_pct" ]; then
+# ウィンドウごとに独立して表示する。Claude Code はリセット時刻を過ぎた
+# ウィンドウを JSON から削除するため、片方だけが欠けることがある。
+# 残量（*_rem）はキャッシュ書き込みでも使うため、表示分岐の外で代入する。
+five_hour_rem=""
+seven_day_rem=""
+if [ -n "$five_hour_pct" ]; then
     five_hour_rem=$((100 - five_hour_pct))
-    seven_day_rem=$((100 - seven_day_pct))
-    rate_display="5h:${five_hour_rem}%% rem 7d:${seven_day_rem}%% rem"
+    five_hour_display="5h:${five_hour_rem}%% rem"
 else
-    rate_display="5h:-- 7d:--"
+    five_hour_display="5h:--"
 fi
+if [ -n "$seven_day_pct" ]; then
+    seven_day_rem=$((100 - seven_day_pct))
+    seven_day_display="7d:${seven_day_rem}%% rem"
+else
+    seven_day_display="7d:--"
+fi
+rate_display="${five_hour_display} ${seven_day_display}"
 
 # 各セクションを変数に格納
 # user@host セクション
@@ -116,8 +127,8 @@ printf "%s\n%s\n" \
 # herdr のタブバー右端から実行される scripts/claude-rate-status が読み取る。
 # statusLine が落ちると Claude Code の画面が壊れるため、失敗はすべて握り潰し、
 # 標準出力（上記の 2 行）・標準エラーを汚さない。
-# rate_limits が入力に無い場合は何も書かず、既存のキャッシュをそのまま残す。
-if [ -n "$five_hour_pct" ] && [ -n "$seven_day_pct" ]; then
+# 両ウィンドウが揃っていない場合は何も書かず、既存のキャッシュをそのまま残す。
+if [ -n "$five_hour_rem" ] && [ -n "$seven_day_rem" ]; then
     cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/claude-statusline"
     cache_path="$cache_dir/rate-limits"
     # 一時ファイルは同一ディレクトリに置く（別ファイルシステム経由だと

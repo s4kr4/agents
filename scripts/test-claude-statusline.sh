@@ -217,6 +217,92 @@ json_zero_context() {
 EOF
 }
 
+# 片側欠落: リセット時刻を過ぎた five_hour を Claude Code が削除した状態（seven_day だけが残る）
+json_seven_day_only() {
+    cat <<EOF
+{
+  "workspace": { "project_dir": "$proj_dir", "current_dir": "$proj_dir" },
+  "model": { "display_name": "Opus 5" },
+  "context_window": {
+    "context_window_size": 200000,
+    "current_usage": {
+      "input_tokens": 30000,
+      "cache_creation_input_tokens": 5000,
+      "cache_read_input_tokens": 7000
+    }
+  },
+  "rate_limits": {
+    "seven_day": { "used_percentage": 6.0 }
+  }
+}
+EOF
+}
+
+# 片側欠落: seven_day のキーが無く five_hour だけが残る
+json_five_hour_only() {
+    cat <<EOF
+{
+  "workspace": { "project_dir": "$proj_dir", "current_dir": "$proj_dir" },
+  "model": { "display_name": "Opus 5" },
+  "context_window": {
+    "context_window_size": 200000,
+    "current_usage": {
+      "input_tokens": 30000,
+      "cache_creation_input_tokens": 5000,
+      "cache_read_input_tokens": 7000
+    }
+  },
+  "rate_limits": {
+    "five_hour": { "used_percentage": 21.4 }
+  }
+}
+EOF
+}
+
+# 片側欠落: five_hour のキーはあるが値が null
+json_five_hour_null() {
+    cat <<EOF
+{
+  "workspace": { "project_dir": "$proj_dir", "current_dir": "$proj_dir" },
+  "model": { "display_name": "Opus 5" },
+  "context_window": {
+    "context_window_size": 200000,
+    "current_usage": {
+      "input_tokens": 30000,
+      "cache_creation_input_tokens": 5000,
+      "cache_read_input_tokens": 7000
+    }
+  },
+  "rate_limits": {
+    "five_hour": null,
+    "seven_day": { "used_percentage": 6.0 }
+  }
+}
+EOF
+}
+
+# 片側が数値でない: five_hour.used_percentage が文字列（欠落と同じ扱いになるべき）
+json_five_hour_pct_string() {
+    cat <<EOF
+{
+  "workspace": { "project_dir": "$proj_dir", "current_dir": "$proj_dir" },
+  "model": { "display_name": "Opus 5" },
+  "context_window": {
+    "context_window_size": 200000,
+    "current_usage": {
+      "input_tokens": 30000,
+      "cache_creation_input_tokens": 5000,
+      "cache_read_input_tokens": 7000
+    }
+  },
+  "rate_limits": {
+    "five_hour": { "used_percentage": "21.4" },
+    "seven_day": { "used_percentage": 6.0 }
+  }
+}
+EOF
+}
+
 # ---------------------------------------------------------------------------
 # 実行ヘルパー
 # ---------------------------------------------------------------------------
@@ -286,9 +372,12 @@ expected_line2_baseline="⛁ 42.0k/200.0k (21.0%) │ ⚡ 5h:79% rem 7d:94% rem"
 # --- 条件1: 正規形入力でレートリミットキャッシュが所定パスへ書き出される
 start_test "正規形入力でレートリミットキャッシュが XDG_CACHE_HOME 配下へ書き出される"
 new_cache_root
-printf -v t_before '%(%s)T' -1
+# '%(%s)T' 非対応の bash（macOS の 3.2 等）では printf -v が失敗し、変数を未設定に戻す
+# （事前に代入しておいても消える）。set -u でスイート全体が中断しないよう失敗時に空を入れ直し、
+# 近傍判定を FAIL として記録させる。
+printf -v t_before '%(%s)T' -1 || t_before=""
 run_statusline json_baseline XDG_CACHE_HOME="$root"
-printf -v t_after '%(%s)T' -1
+printf -v t_after '%(%s)T' -1 || t_after=""
 cf="$(cache_file "$root")"
 assert_true "キャッシュファイルが \$XDG_CACHE_HOME/claude-statusline/rate-limits に生成される" \
     "$([ -f "$cf" ] && echo 1 || echo 0)" \
@@ -435,6 +524,69 @@ assert_eq "rate_limits 欠落でも exit 0" "0" "$run_rc"
 assert_eq "rate_limits 欠落時の statusline 本体" \
     "$expected_line1
 ⛁ 42.0k/200.0k (21.0%) │ ⚡ 5h:-- 7d:--" "$run_out"
+
+# --- 条件14: レート制限はウィンドウごとに独立して表示する
+# Claude Code はリセット時刻を過ぎたウィンドウを JSON から削除するため、放置中に
+# 5 時間ウィンドウの境界を跨ぐと five_hour だけが消えた入力で再実行される。
+# 各ウィンドウの表示は、そのウィンドウの used_percentage が数値なら
+# "<100-四捨五入値>% rem"、そうでなければ "--" で、もう一方の有無に依存しない。
+# キャッシュは両ウィンドウとも数値のときに限り書く。
+
+# assert_single_window_output <状況> <期待する2行目>
+assert_single_window_output() {
+    local situation="$1" line2="$2"
+    assert_eq "${situation}でも exit 0" "0" "$run_rc"
+    assert_eq "${situation}の statusline 本体" \
+        "$expected_line1
+$line2" "$run_out"
+    assert_eq "${situation}でも標準出力は 2 行" "2" "$(printf '%s\n' "$run_out" | wc -l | tr -d ' ')"
+    assert_eq "${situation}でも stderr は空" "" "$run_err"
+}
+
+expected_line2_seven_day_only="⛁ 42.0k/200.0k (21.0%) │ ⚡ 5h:-- 7d:94% rem"
+expected_line2_five_hour_only="⛁ 42.0k/200.0k (21.0%) │ ⚡ 5h:79% rem 7d:--"
+
+start_test "five_hour キーが無く seven_day だけがあるとき 7d の残量だけを表示し 5h は -- になる"
+new_cache_root
+run_statusline json_seven_day_only XDG_CACHE_HOME="$root"
+assert_single_window_output "five_hour 欠落" "$expected_line2_seven_day_only"
+
+start_test "seven_day キーが無く five_hour だけがあるとき 5h の残量だけを表示し 7d は -- になる"
+new_cache_root
+run_statusline json_five_hour_only XDG_CACHE_HOME="$root"
+assert_single_window_output "seven_day 欠落" "$expected_line2_five_hour_only"
+
+start_test "five_hour が null のときは five_hour キーが無いときと同じ表示になる"
+new_cache_root
+run_statusline json_five_hour_null XDG_CACHE_HOME="$root"
+assert_single_window_output "five_hour が null 値" "$expected_line2_seven_day_only"
+
+start_test "five_hour の used_percentage が数値でない（文字列）ときは five_hour キーが無いときと同じ表示になる"
+new_cache_root
+run_statusline json_five_hour_pct_string XDG_CACHE_HOME="$root"
+assert_single_window_output "five_hour.used_percentage が文字列" "$expected_line2_seven_day_only"
+
+start_test "片方のウィンドウしか無いときはキャッシュファイルを作らない"
+for producer in json_seven_day_only json_five_hour_only json_five_hour_null json_five_hour_pct_string; do
+    new_cache_root
+    run_statusline "$producer" XDG_CACHE_HOME="$root"
+    cf="$(cache_file "$root")"
+    assert_true "キャッシュファイルが作られない（${producer}）" "$([ ! -e "$cf" ] && echo 1 || echo 0)" \
+        "unexpected content: $(cat "$cf" 2>/dev/null)"
+done
+
+start_test "片方のウィンドウしか無いときは既存キャッシュの内容が変化しない"
+for producer in json_seven_day_only json_five_hour_only json_five_hour_null json_five_hour_pct_string; do
+    new_cache_root
+    cf="$(cache_file "$root")"
+    mkdir -p "$root/claude-statusline"
+    stale_content='five_hour_remaining=11
+seven_day_remaining=22
+updated_at=1000000000'
+    printf '%s\n' "$stale_content" > "$cf"
+    run_statusline "$producer" XDG_CACHE_HOME="$root"
+    assert_eq "既存キャッシュの内容が変化しない（${producer}）" "$stale_content" "$(cat "$cf")"
+done
 
 # --- 条件11: 一時ファイルはキャッシュファイルと同一ディレクトリに作る
 # 別ファイルシステムをまたぐと mv が rename(2) にならず、読み手（claude-rate-status）
