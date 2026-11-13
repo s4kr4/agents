@@ -19,6 +19,8 @@ description: Claude Code と Codex の通常の作業で共有メモリを読み
 
 ## 本文の書き方
 
+既存の記憶を更新するときは、`write_memory` の `change_message` にコミットメッセージのような短い変更の要点を指定する（例: `検証時の保存先の隔離手順を明確化`）。本文の変更前後を複写せず、1文・80文字以内にする。CLI では `write-memory --change-message` を使う。
+
 `write_memory` の summary は Markdown として Vault に保存され、`get_context` / `search` の結果としてそのまま読まれる。改行のない1段落に詰めると結論・条件・実例の境目が読み取れないため、意味の区切りで改行する。
 
 - 1文目に結論（何をするか・何が成り立つか）を書く。検索結果で最初に読まれる部分のため

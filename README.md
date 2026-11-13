@@ -90,7 +90,7 @@ SKIP_SKILL_SYNC_CHECK=1 git commit -m "..."
 
 ファイルベースの 2 層構成で Codex や Claude Code など複数の LLM クライアントからセッション横断の記憶を共有する仕組みです。日常の読み書きは `hikidashi` stdio MCP サーバー経由で行います。
 
-- Vault（`memories`。Syncthing 同期対象）: 安定した記憶を Obsidian Vault 配下に Markdown で保存。1 論理キー = 1 ファイルで、値の変遷は同一ファイル内の変更履歴に追記する
+- Vault（`memories`。Syncthing 同期対象）: 安定した記憶を Obsidian Vault 配下に Markdown で保存。1 論理キー = 1 ファイルで、同一ファイル内の変更履歴には日付と短い変更メッセージを追記する
 - local（`sessions`/`events`/`observations`。同期対象外）: 生ログ・pipeline 層のデータを `$HIKIDASHI_MCP_PATH/local/` 配下にファイルとして保存
 
 CLI・MCP サーバー・ストア・導入スクリプト・詳細ドキュメントは別リポジトリ [hikidashi-mcp](https://github.com/s4kr4/hikidashi-mcp) にあります。任意のパスへ clone し、環境変数 `HIKIDASHI_MCP_PATH` にその clone の絶対パスを設定してください。`HIKIDASHI_MCP_PATH` に既定値はなく、未設定の端末では共有メモリを使う機能が動作しません。
