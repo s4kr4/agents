@@ -26,7 +26,8 @@ glob_scan_max_depth = 12
 enabled = true
 
 [permissions.project-edit.network.domains]
-"*" = "allow"
+"localhost" = "allow"
+"127.0.0.1" = "allow"
 
 [agents]
 max_threads = 4
@@ -35,6 +36,7 @@ max_depth = 1
 [features]
 hooks = true
 multi_agent = true
+network_proxy = true
 
 [tui]
 notifications = ["agent-turn-complete", "approval-requested"]
