@@ -74,6 +74,7 @@ description: Implementation specialist for any domain (backend API, frontend UI,
 | `mcp__serena__rename_symbol`        | シンボル名変更     |
 
 **`Write` は新規ファイル作成のみ**。既存ファイルの編集には使用しない。
+既存ファイルの書き換えは `Edit`（または Serena）で行う。Bash（sed・スクリプト・heredoc など）でファイルを書き換えない。Bash経由の書き込みは、フックの境界チェックとシークレットスキャンを通らないため。
 
 ## 📋 作業手順
 
